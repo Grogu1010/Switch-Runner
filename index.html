@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Switch Runner</title>
+  <style>
+    :root{
+      --bg:#060916;--panel:#0d1430;--text:#eef4ff;--muted:#9fb0d0;
+      --cyan:#2de2e6;--magenta:#ff4fd8;--gold:#ffd166;--lime:#7dff8f;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:radial-gradient(circle at 20% 0%,rgba(125,180,255,.18) 0%,transparent 28%),radial-gradient(circle at 80% 10%,rgba(255,79,216,.14) 0%,transparent 24%),linear-gradient(180deg,#040713,#081126 42%,#0b183d 100%);
+      color:var(--text);
+      font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      overflow:hidden;
+    }
+    .game-shell{
+      width:min(100vw,1000px);
+      border-radius:28px;
+      overflow:hidden;
+      clip-path: inset(0 round 28px);
+      box-shadow:0 24px 70px rgba(0,0,0,.35);
+      border:1px solid rgba(255,255,255,.10);
+      background:#050a17;
+      isolation:isolate;
+    }
+    canvas{
+      width:100%;
+      height:auto;
+      display:block;
+      border:none;
+      border-radius:28px;
+      background:linear-gradient(180deg,#050a17,#091328 55%,#0c1839);
+    }
+
+  </style>
+</head>
+<body>
+  <div class="game-shell"><canvas id="game" width="1000" height="500"></canvas></div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const groundY = H - 84;
+const ceilingY = 64;
+
+
+
+
+
+
+const COLORS = {
+  bgTop:'#050c1a', bgBottom:'#1a3169', mountain1:'#0a1532', mountain2:'#152655',
+  grid:'rgba(255,255,255,.05)', ground:'#27468d', groundEdge:'rgba(255,255,255,.24)',
+  cyan:'#37f0ff', magenta:'#ff5ae0', gold:'#ffd166', white:'#f8fbff', dark:'#0a1020',
+  lime:'#82ff9a', red:'#ff6b6b', platform:'#8fb6ff', glow:'rgba(255,255,255,.12)'
+};
+const PHASES = ['cyan','magenta'];
+const MODES = ['runner','spider','jetpack'];
+
+let best = Number(localStorage.getItem('pulsePrismDXBest') || 0);
+
+
+const state = {
+  started:false, gameOver:false, score:0, speed:6.1, time:0, cameraShake:0, phase:0, mode:0, gravityDir:1,
+  particles:[], stars:[], mountains:[], obstacles:[], platforms:[], pickups:[], portals:[],
+  phaseTransfer:null, portalEventActive:false, nextPortalEvent:900,
+  portalExitDueTime:null, portalExitKind:null,
+  spiderSide:'floor',
+  spiderTransitFrames:0,
+  jetpackThrust:0,
+  lastGroundHazard:'',
+  showHelp:false,
+  menuScore:0,
+  menuButton:{x:0,y:0,w:0,h:0},
+  backButton:{x:0,y:0,w:0,h:0}
+};
+
+const player = {
+  x:160, y:groundY - 38, w:38, h:38, vy:0, gravity:0.82, jumpPower:14.7,
+  onGround:true, onCeiling:false, scaleX:1, scaleY:1, rotation:0, targetRotation:0, trail:[]
+};
+
+function phaseColor(i){ return COLORS[PHASES[i]]; }
+function updateLabels(){}
+function emit(x,y,color,count=8,spread=3){
+  for(let i=0;i<count;i++){
+    state.particles.push({x,y,color,vx:(Math.random()-0.5)*spread,vy:(Math.random()-0.5)*spread-Math.random()*1.5,life:24+Math.random()*12,size:2+Math.random()*4});
+  }
+}
+function reset(){
+  state.started=false; state.gameOver=false; state.speed=6.1; state.time=0; state.cameraShake=0;
+  state.phase=0; state.mode=0; state.gravityDir=1; state.particles=[]; state.obstacles=[]; state.platforms=[]; state.pickups=[]; state.portals=[]; state.phaseTransfer=null; state.portalEventActive=false; state.nextPortalEvent=900; state.portalExitDueTime=null; state.portalExitKind=null; state.spiderSide='floor'; state.spiderTransitFrames=0; state.jetpackThrust=0; state.lastGroundHazard=''; state.showHelp=false;
+  player.x=160; player.y=groundY-player.h; player.vy=0; player.onGround=true; player.onCeiling=false; player.scaleX=1; player.scaleY=1; player.rotation=0; player.targetRotation=0; player.trail=[];
+  updateLabels();
+}
+
+function startFreshRun(){
+  reset();
+  state.score = 0;
+  state.menuScore = 0;
+  state.started = true;
+}
+function initBackground(){
+  state.stars = Array.from({length:110},()=>({
+    x:Math.random()*W,y:Math.random()*(H-20),r:Math.random()*2.2+0.3,s:Math.random()*0.6+0.15,
+    tw:Math.random()*Math.PI*2
+  }));
+  state.mountains = Array.from({length:10},(_,i)=>({x:i*170,h:100+Math.random()*110,w:170+Math.random()*100,layer:i%2}));
+}
+function endGame(){
+  state.cameraShake=12;
+  emit(player.x+player.w/2, player.y+player.h/2, phaseColor(state.phase), 20, 7);
+  best=Math.max(best, Math.floor(state.score));
+  localStorage.setItem('pulsePrismDXBest', best);
+  state.menuScore = Math.floor(state.score);
+  state.started = false;
+  state.gameOver = false;
+  state.showHelp = false;
+}
+let jetpackHeld = false;
+
+function jump(){
+  if(state.gameOver) return;
+  state.started=true;
+  if(state.mode===0){
+    if(player.onGround || player.onCeiling){
+      player.vy = -player.jumpPower * state.gravityDir;
+      player.onGround=false;
+      player.onCeiling=false;
+      player.scaleX=1.18; player.scaleY=0.82;
+      const dustY = state.gravityDir === 1 ? groundY-4 : ceilingY + player.h + 4;
+      emit(player.x+8, dustY, phaseColor(state.phase), 8, 3);
+    }
+  } else if(state.mode===1){
+    let targetY;
+    if(state.spiderSide === 'floor'){
+      targetY = ceilingY;
+      let bestDist = Infinity;
+      for(const p of state.platforms){
+        const withinX = player.x + player.w > p.x + 10 && player.x < p.x + p.w - 10;
+        if(!withinX) continue;
+        const undersideY = p.y + p.h;
+        if(undersideY < player.y - 6){
+          const dist = player.y - undersideY;
+          if(dist < bestDist){
+            bestDist = dist;
+            targetY = undersideY;
+          }
+        }
+      }
+      player.vy = -Math.max(10, Math.abs(player.y - targetY));
+      player.onGround=false; player.onCeiling=false;
+      state.spiderSide = 'ceiling';
+    } else {
+      targetY = groundY - player.h;
+      let bestDist = Infinity;
+      for(const p of state.platforms){
+        const withinX = player.x + player.w > p.x + 10 && player.x < p.x + p.w - 10;
+        if(!withinX) continue;
+        const topY = p.y - player.h;
+        if(topY > player.y + 6){
+          const dist = topY - player.y;
+          if(dist < bestDist){
+            bestDist = dist;
+            targetY = topY;
+          }
+        }
+      }
+      player.vy = Math.max(10, Math.abs(targetY - player.y));
+      player.onGround=false; player.onCeiling=false;
+      state.spiderSide = 'floor';
+    }
+    player.spiderTargetY = targetY;
+    state.spiderTransitFrames = 6;
+    player.targetRotation += Math.PI; player.scaleX=0.85; player.scaleY=1.2; state.cameraShake=4;
+    emit(player.x+player.w/2, player.y+player.h/2, COLORS.lime, 12, 5);
+  } else {
+    jetpackHeld = true;
+  }
+}
+function spawnObstacle(type, x=W+40, y=null){
+  const phase = Math.random()<0.5 ? 0 : 1;
+  const o = {type,x,phase,passed:false};
+  if(type==='spike'){ o.w=34; o.h=36; o.y=(y ?? (groundY - o.h)); }
+  else if(type==='block'){ o.w=48; o.h=48; o.y=(y ?? (groundY - o.h)); }
+  else if(type==='tallblock'){ o.w=48; o.h=Math.round(48 * 1.8); o.y=(y ?? (groundY - o.h)); }
+  else if(type==='diamond'){ o.w=34; o.h=34; o.y=(y ?? (groundY - 130 - Math.random()*80)); }
+  else if(type==='ceilingSpike'){ o.w=36; o.h=36; o.y=(y ?? ceilingY); }
+  state.obstacles.push(o);
+
+  if(type === 'block' || type === 'tallblock'){
+    state.lastGroundHazard = type;
+  } else if(type === 'spike'){
+    state.lastGroundHazard = 'spike';
+  }
+}
+function spawnPlatform(){
+  const w=120+Math.random()*80, h=18;
+  const maxRise = 150;
+  let y;
+  if(state.gravityDir===1){
+    y = groundY - (55 + Math.random()*(maxRise-15));
+    y = Math.max(groundY - maxRise, Math.min(groundY - 48, y));
+  } else {
+    y = ceilingY + 40 + Math.random()*(maxRise-20);
+    y = Math.max(ceilingY + 40, Math.min(ceilingY + maxRise, y));
+  }
+  state.platforms.push({x:W+40,y,w,h,glow:Math.random()*6});
+
+  if(state.mode===1){
+    if(Math.random()<0.58) spawnObstacle('spike', W+55+Math.random()*(w-50), y-36);
+    if(Math.random()<0.58) spawnObstacle('ceilingSpike', W+55+Math.random()*(w-50), y+h);
+  } else if(Math.random()<0.42){
+    if(state.gravityDir===1) spawnObstacle('spike', W+55+Math.random()*(w-50), y-36);
+    else spawnObstacle('ceilingSpike', W+55+Math.random()*(w-50), y+h);
+  }
+}
+function spawnPickup(){ state.pickups.push({x:W+20,y:groundY-130-Math.random()*160,r:11,bob:Math.random()*Math.PI*2}); }
+function clearPortalSpace(portalX){
+  const portalBuffer = 272; // about 8 spike widths
+  const minX = portalX - portalBuffer;
+  const maxX = portalX + 28 + portalBuffer;
+
+  state.obstacles = state.obstacles.filter(o => (o.x + o.w) < minX || o.x > maxX);
+  state.platforms = state.platforms.filter(p => (p.x + p.w) < minX || p.x > maxX);
+  state.pickups = state.pickups.filter(p => (p.x + p.r) < minX || p.x - p.r > maxX);
+}
+
+function spawnSpiderPortal(start=false){
+  const portalX = W + 60;
+  clearPortalSpace(portalX);
+  state.portals.push({x: portalX,y:0,w:28,h:H,kind:'spider',ttl:720,ender:!start,triggered:false});
+}
+function spawnGravityPortal(start=false){
+  const portalX = W + 60;
+  clearPortalSpace(portalX);
+  state.portals.push({x: portalX,y:0,w:28,h:H,kind:'gravity',ttl:720,ender:!start,triggered:false});
+}
+function spawnJetpackPortal(start=false){
+  const portalX = W + 60;
+  clearPortalSpace(portalX);
+  state.portals.push({x: portalX,y:0,w:28,h:H,kind:'jetpack',ttl:720,ender:!start,triggered:false});
+}
+function spawnEndPortal(kind){
+  const portalX = W + 60;
+  clearPortalSpace(portalX);
+  state.portals.push({x:portalX,y:0,w:28,h:H,kind,ttl:720,ender:true,triggered:false});
+}
+
+function rectsIntersect(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
+function circleRectIntersect(c,r){
+  const cx=Math.max(r.x,Math.min(c.x,r.x+r.w)), cy=Math.max(r.y,Math.min(c.y,r.y+r.h));
+  const dx=c.x-cx, dy=c.y-cy; return dx*dx+dy*dy < c.r*c.r;
+}
+function playerRect(){ return {x:player.x,y:player.y,w:player.w,h:player.h}; }
+function obstacleRect(o){ return {x:o.x,y:o.y,w:o.w,h:o.h}; }
+
+function startPhaseTransfer(obstacle){
+  state.phaseTransfer = { obstacle, targetPhase: obstacle.phase };
+}
+function maybeCompletePhaseTransfer(){
+  if(!state.phaseTransfer) return;
+  const o = state.phaseTransfer.obstacle;
+  if(!state.obstacles.includes(o)){ state.phaseTransfer=null; return; }
+  if(player.x > o.x + o.w || player.x + player.w < o.x){
+    state.phase = state.phaseTransfer.targetPhase;
+    updateLabels();
+    state.cameraShake = 4;
+    emit(player.x+player.w/2, player.y+player.h/2, phaseColor(state.phase), 14, 5);
+    state.phaseTransfer = null;
+  }
+}
+
+function updateRunnerPhysics(){
+  player.vy += player.gravity * state.gravityDir;
+  player.y += player.vy;
+  player.onGround=false; player.onCeiling=false;
+
+  for(const p of state.platforms){
+    const withinX = player.x + player.w > p.x + 8 && player.x < p.x + p.w - 8;
+    if(state.gravityDir===1){
+      const prevBottom = player.y - player.vy + player.h;
+      const newBottom = player.y + player.h;
+      const crossingTop = prevBottom <= p.y && newBottom >= p.y;
+      if(player.vy >= 0 && withinX && crossingTop){
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      }
+    } else {
+      const prevTop = player.y - player.vy;
+      const newTop = player.y;
+      const platformBottom = p.y + p.h;
+      const crossingBottom = prevTop >= platformBottom && newTop <= platformBottom;
+      if(player.vy <= 0 && withinX && crossingBottom){
+        player.y = platformBottom;
+        player.vy = 0;
+        player.onCeiling = true;
+      }
+    }
+  }
+  if(state.gravityDir===1){
+    if(player.y >= groundY - player.h){
+      player.y = groundY - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  } else {
+    if(player.y <= ceilingY){
+      player.y = ceilingY;
+      player.vy = 0;
+      player.onCeiling = true;
+    }
+  }
+
+  if(player.onGround || player.onCeiling){
+    player.scaleX += (1.0 - player.scaleX) * 0.2;
+    player.scaleY += (1.0 - player.scaleY) * 0.2;
+  } else {
+    player.scaleX += (0.92 - player.scaleX) * 0.07;
+    player.scaleY += (1.08 - player.scaleY) * 0.07;
+  }
+  player.targetRotation = Math.max(-0.45, Math.min(0.45, player.vy * 0.035));
+}
+function updateSpiderPhysics(){
+  if(state.spiderTransitFrames > 0){
+    player.y += player.vy / state.spiderTransitFrames;
+    state.spiderTransitFrames -= 1;
+
+    if(state.spiderSide === 'floor'){
+      let snapY = groundY - player.h;
+      let bestDist = Math.abs(player.y - snapY);
+      for(const p of state.platforms){
+        const withinX = player.x + player.w > p.x + 10 && player.x < p.x + p.w - 10;
+        if(!withinX) continue;
+        const topY = p.y - player.h;
+        const dist = Math.abs(player.y - topY);
+        if(dist < bestDist){
+          bestDist = dist;
+          snapY = topY;
+        }
+      }
+      if(bestDist <= 22 || state.spiderTransitFrames <= 0){
+        player.y = snapY;
+        state.spiderTransitFrames = 0;
+        player.onGround = true;
+        player.onCeiling = false;
+        player.vy = 0;
+      }
+    } else {
+      let snapY = ceilingY;
+      let bestDist = Math.abs(player.y - snapY);
+      for(const p of state.platforms){
+        const withinX = player.x + player.w > p.x + 10 && player.x < p.x + p.w - 10;
+        if(!withinX) continue;
+        const bottomY = p.y + p.h;
+        const dist = Math.abs(player.y - bottomY);
+        if(dist < bestDist){
+          bestDist = dist;
+          snapY = bottomY;
+        }
+      }
+      if(bestDist <= 22 || state.spiderTransitFrames <= 0){
+        player.y = snapY;
+        state.spiderTransitFrames = 0;
+        player.onGround = false;
+        player.onCeiling = true;
+        player.vy = 0;
+      }
+    }
+
+    if(state.spiderTransitFrames > 0){
+      player.onGround = false;
+      player.onCeiling = false;
+    }
+  } else if(state.spiderSide === 'floor'){
+    let bestY = groundY - player.h;
+    let bestDist = Math.abs(player.y - bestY);
+    for(const p of state.platforms){
+      const withinX = player.x + player.w > p.x + 10 && player.x < p.x + p.w - 10;
+      if(!withinX) continue;
+      const topY = p.y - player.h;
+      const dist = Math.abs(player.y - topY);
+      if(dist < bestDist){
+        bestDist = dist;
+        bestY = topY;
+      }
+    }
+    player.y = bestY;
+    player.onGround = true;
+    player.onCeiling = false;
+  } else {
+    let bestY = ceilingY;
+    let bestDist = Math.abs(player.y - bestY);
+    for(const p of state.platforms){
+      const withinX = player.x + player.w > p.x + 10 && player.x < p.x + p.w - 10;
+      if(!withinX) continue;
+      const bottomY = p.y + p.h;
+      const dist = Math.abs(player.y - bottomY);
+      if(dist < bestDist){
+        bestDist = dist;
+        bestY = bottomY;
+      }
+    }
+    player.y = bestY;
+    player.onGround = false;
+    player.onCeiling = true;
+  }
+
+  player.scaleX += (1.0 - player.scaleX) * 0.16;
+  player.scaleY += (1.0 - player.scaleY) * 0.16;
+}
+
+function updateJetpackPhysics(){
+  // Smooth ramp up while holding, but only a tiny amount of carry when released.
+  const maxThrust = 5.0;
+  const targetThrust = jetpackHeld ? maxThrust : 0;
+  state.jetpackThrust += (targetThrust - state.jetpackThrust) * 0.22;
+
+  const prevY = player.y;
+
+  if(jetpackHeld){
+    player.vy += player.gravity * 0.42 * state.gravityDir;
+    player.vy += -state.jetpackThrust * state.gravityDir;
+  }else{
+    const maxCarry = -0.76 * state.gravityDir; // doubled carry on release
+    if(player.vy * state.gravityDir < 0){
+      if(state.gravityDir === 1){
+        player.vy = Math.max(player.vy, maxCarry);
+      } else {
+        player.vy = Math.min(player.vy, maxCarry);
+      }
+    }
+    player.vy += player.gravity * 0.82 * state.gravityDir;
+  }
+
+  player.vy = Math.max(-6.6, Math.min(6.6, player.vy));
+  player.y += player.vy;
+
+  player.onGround = false;
+  player.onCeiling = false;
+
+  // Land on the tops of floating platforms in jetpack mode.
+  for(const pf of state.platforms){
+    const withinX = player.x + player.w > pf.x + 6 && player.x < pf.x + pf.w - 6;
+    if(!withinX) continue;
+
+    const platformTop = pf.y - player.h;
+    const prevBottom = prevY + player.h;
+    const newBottom = player.y + player.h;
+    const crossingTop = prevBottom <= pf.y && newBottom >= pf.y;
+
+    if(player.vy > 0 && crossingTop){
+      player.y = platformTop;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  }
+
+  if(player.y < ceilingY){ player.y = ceilingY; player.vy = 0; player.onCeiling = true; }
+  if(player.y > groundY - player.h){ player.y = groundY - player.h; player.vy = 0; player.onGround = true; }
+
+  player.scaleX += ((jetpackHeld ? 0.9 : 1.02) - player.scaleX) * 0.12;
+  player.scaleY += ((jetpackHeld ? 1.12 : 0.98) - player.scaleY) * 0.12;
+  player.targetRotation = Math.max(-0.8, Math.min(0.8, player.vy * 0.06));
+
+  if(jetpackHeld && state.time % 3 === 0){
+    emit(player.x + player.w/2 - 10, player.y + player.h/2 + 14, COLORS.gold, 2, 2);
+  }
+}
+function update(){
+  state.time++;
+  for(const s of state.stars){
+    s.x -= s.s * (state.speed * 0.28);
+    s.tw += 0.03;
+    if(s.x < -4){ s.x = W + Math.random()*30; s.y = Math.random()*(H-10); s.tw = Math.random()*Math.PI*2; }
+  }
+  for(const m of state.mountains){
+    m.x -= state.speed * (m.layer ? 0.35 : 0.22);
+    if(m.x + m.w < -20){ m.x = W + Math.random()*120; m.h = 100 + Math.random()*110; m.w = 170 + Math.random()*90; }
+  }
+  for(const pt of state.particles){
+    pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.05; pt.life -= 1;
+  }
+  state.particles = state.particles.filter(p=>p.life>0);
+  if(!state.started || state.gameOver) return;
+
+  state.score += 0.12 + state.speed * 0.016;
+  // speed no longer increases
+
+
+  if(state.mode===0) updateRunnerPhysics(); else if(state.mode===1) updateSpiderPhysics(); else updateJetpackPhysics();
+  player.rotation += (player.targetRotation - player.rotation) * 0.22;
+
+  player.trail.push({x:player.x+player.w/2,y:player.y+player.h/2,alpha:0.42,phase:state.phase,size:state.mode===1?18:14});
+  if(player.trail.length>18) player.trail.shift();
+  for(const t of player.trail) t.alpha -= 0.03;
+
+  const lastSolidX = Math.max(
+    state.obstacles.length ? state.obstacles[state.obstacles.length-1].x : -9999,
+    state.platforms.length ? state.platforms[state.platforms.length-1].x : -9999
+  );
+  const portalBuffer = 272; // about 8 spike widths
+  const nextSpawnX = W + 40;
+  const portalTooClose = state.portals.some(po => {
+    const portalLeft = po.x - portalBuffer;
+    const portalRight = po.x + po.w + portalBuffer;
+    return nextSpawnX >= portalLeft && nextSpawnX <= portalRight;
+  });
+  if(lastSolidX < W-145 && !portalTooClose){
+    const r=Math.random();
+    if(state.mode===0){
+      if(state.gravityDir===1){
+        if(r<0.38) spawnPlatform();
+        else if(r<0.56) spawnObstacle('spike');
+        else if(r<0.70) spawnObstacle('block');
+        else if(r<0.80){
+          if(state.lastGroundHazard === 'tallblock') spawnObstacle('block');
+          else spawnObstacle('tallblock');
+        }
+        else spawnObstacle('diamond');
+      } else {
+        if(r<0.38) spawnPlatform();
+        else if(r<0.56) spawnObstacle('ceilingSpike');
+        else if(r<0.70) spawnObstacle('block', W+40, ceilingY);
+        else if(r<0.80){
+          if(state.lastGroundHazard === 'tallblock') spawnObstacle('block', W+40, ceilingY);
+          else spawnObstacle('tallblock', W+40, ceilingY);
+        }
+        else spawnObstacle('diamond');
+      }
+    } else if(state.mode===1){
+      if(r<0.26) spawnPlatform();
+      else if(r<0.44) spawnObstacle('spike');
+      else if(r<0.62) spawnObstacle('ceilingSpike');
+      else if(r<0.78) spawnObstacle('diamond');
+      else if(state.gravityDir===1) spawnObstacle('block');
+      else spawnObstacle('block', W+40, ceilingY);
+    } else {
+      if(state.gravityDir===1){
+        if(r<0.24) spawnPlatform();
+        else if(r<0.48) spawnObstacle('ceilingSpike');
+        else if(r<0.66) spawnObstacle('spike');
+        else if(r<0.82) spawnObstacle('diamond');
+        else spawnObstacle('block');
+      } else {
+        if(r<0.24) spawnPlatform();
+        else if(r<0.48) spawnObstacle('spike');
+        else if(r<0.66) spawnObstacle('ceilingSpike');
+        else if(r<0.82) spawnObstacle('diamond');
+        else spawnObstacle('block', W+40, ceilingY);
+      }
+    }
+  }
+
+  // Portal events: a start portal appears at a random interval around ~12s.
+  // After you hit it, the matching end portal appears exactly 12s later.
+  if(!state.portalEventActive && state.time >= state.nextPortalEvent){
+    state.portalEventActive = true;
+    const portalKinds = ['spider','gravity','jetpack'];
+    const chosen = portalKinds[Math.floor(Math.random() * portalKinds.length)];
+    if(chosen === 'spider') spawnSpiderPortal(true);
+    else if(chosen === 'gravity') spawnGravityPortal(true);
+    else spawnJetpackPortal(true);
+  }
+
+  if(Math.random()<0.006 && (state.pickups.length===0 || state.pickups[state.pickups.length-1].x < W-260) && !portalTooClose) spawnPickup();
+
+  for(const arr of [state.obstacles, state.platforms, state.pickups]){
+    for(const o of arr){
+      o.x -= state.speed;
+      if(o.bob !== undefined) o.bob += 0.08;
+      if(o.glow !== undefined) o.glow += 0.07;
+    }
+  }
+  for(const po of state.portals){
+    po.x -= state.speed;
+    if(po.ttl !== undefined) po.ttl -= 1;
+  }
+
+  if(state.portalEventActive && state.portalExitDueTime !== null && state.time >= state.portalExitDueTime){
+    if(!state.portals.some(p => p.ender && p.kind === state.portalExitKind)){
+      spawnEndPortal(state.portalExitKind);
+    }
+    state.portalExitDueTime = null;
+  }
+
+  const pr = playerRect();
+
+  for(const po of state.portals){
+    if(rectsIntersect(pr, po)){
+      if(po.hitCooldown || po.triggered) {
+        if(po.hitCooldown) po.hitCooldown -= 1;
+        continue;
+      }
+      po.hitCooldown = 12;
+      po.triggered = true;
+
+      if(po.kind==='spider'){
+        state.mode = state.mode===1 ? 0 : 1;
+        updateLabels();
+        state.cameraShake=5;
+        emit(player.x+player.w/2, player.y+player.h/2, COLORS.lime, 18, 6);
+
+        if(state.mode===1){
+          if(player.y < H/2){ player.onCeiling=true; player.onGround=false; player.y=ceilingY; state.spiderSide='ceiling'; }
+          else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; state.spiderSide='floor'; }
+          player.vy=0; player.targetRotation += Math.PI; player.scaleX=0.88; player.scaleY=1.16;
+        } else {
+          player.onGround=false; player.onCeiling=false; player.vy=0; player.targetRotation=0; player.rotation*=0.35; player.scaleX=1.12; player.scaleY=0.88;
+          if(state.gravityDir===1 && player.y < H/2) player.y=ceilingY+4;
+          if(state.gravityDir===-1 && player.y > H/2) player.y=groundY-player.h-4;
+        }
+
+        if(!po.ender){
+          state.portalExitDueTime = state.time + 720; // exactly 12 seconds later
+          state.portalExitKind = 'spider';
+        } else {
+          state.portalEventActive = false;
+          state.portalExitDueTime = null;
+          state.portalExitKind = null;
+          state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
+        }
+
+      } else if(po.kind==='gravity'){
+        state.gravityDir *= -1;
+        updateLabels();
+        state.cameraShake=6;
+        emit(player.x+player.w/2, player.y+player.h/2, COLORS.gold, 18, 6);
+        player.vy=0; player.scaleX=0.92; player.scaleY=1.12; player.targetRotation = -player.targetRotation;
+        if(state.mode===0){
+          if(state.gravityDir===-1){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
+          else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
+        } else {
+          if(player.onGround){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
+          else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
+        }
+
+        if(!po.ender){
+          state.portalExitDueTime = state.time + 720;
+          state.portalExitKind = 'gravity';
+        } else {
+          state.portalEventActive = false;
+          state.portalExitDueTime = null;
+          state.portalExitKind = null;
+          state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
+        }
+      } else if(po.kind==='jetpack'){
+        state.mode = state.mode===2 ? 0 : 2;
+        updateLabels();
+        state.cameraShake=6;
+        emit(player.x+player.w/2, player.y+player.h/2, COLORS.cyan, 18, 6);
+        player.vy=0; player.scaleX=0.92; player.scaleY=1.12; player.targetRotation = 0;
+
+        if(!po.ender){
+          state.portalExitDueTime = state.time + 720;
+          state.portalExitKind = 'jetpack';
+        } else {
+          state.portalEventActive = false;
+          state.portalExitDueTime = null;
+          state.portalExitKind = null;
+          state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
+        }
+      }
+    }
+    if(po.hitCooldown) po.hitCooldown -= 1;
+  }
+
+  for(const p of state.pickups){
+    const hitPickup = circleRectIntersect({x:p.x, y:p.y+Math.sin(p.bob)*8, r:p.r}, pr);
+    if(hitPickup){
+      p.collected=true; state.score += 75; emit(p.x, p.y, COLORS.gold, 10, 4);
+    }
+  }
+
+  for(const o of state.obstacles){
+    if(!o.passed && o.x + o.w < player.x){ o.passed=true; state.score += 2; }
+    const hit = rectsIntersect(pr, obstacleRect(o));
+    if(hit){
+      if(o.phase === state.phase){
+        endGame();
+      } else if(!state.phaseTransfer || state.phaseTransfer.obstacle !== o){
+        startPhaseTransfer(o);
+      }
+    }
+  }
+
+  maybeCompletePhaseTransfer();
+
+  state.obstacles = state.obstacles.filter(o => o.x + o.w > -80);
+  state.platforms = state.platforms.filter(p => p.x + p.w > -80);
+  state.pickups = state.pickups.filter(p => !p.collected && p.x + p.r > -50);
+  state.portals = state.portals.filter(p => p.x + p.w > -70 && !p.triggered && (p.ttl === undefined || p.ttl > 0));
+  if(state.portalEventActive && !state.portals.length && state.portalExitDueTime === null){ state.portalEventActive = false; state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360)); }
+
+  if(state.cameraShake > 0) state.cameraShake *= 0.86;
+}
+
+function drawBackground(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, COLORS.bgTop);
+  grad.addColorStop(.58, '#102452');
+  grad.addColorStop(1, COLORS.bgBottom);
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+
+  const glow1 = ctx.createRadialGradient(W*0.2, H*0.18, 10, W*0.2, H*0.18, 220);
+  glow1.addColorStop(0, 'rgba(55,240,255,.13)');
+  glow1.addColorStop(1, 'rgba(55,240,255,0)');
+  ctx.fillStyle = glow1;
+  ctx.fillRect(0,0,W,H);
+
+  const glow2 = ctx.createRadialGradient(W*0.78, H*0.22, 10, W*0.78, H*0.22, 220);
+  glow2.addColorStop(0, 'rgba(255,90,224,.11)');
+  glow2.addColorStop(1, 'rgba(255,90,224,0)');
+  ctx.fillStyle = glow2;
+  ctx.fillRect(0,0,W,H);
+
+  for(const s of state.stars){
+    ctx.globalAlpha=.32 + (Math.sin(s.tw)+1)*0.22;
+    ctx.fillStyle='#fff';
+    ctx.beginPath();
+    ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  for(const m of state.mountains){
+    ctx.fillStyle = m.layer ? COLORS.mountain2 : COLORS.mountain1;
+    ctx.beginPath();
+    ctx.moveTo(m.x, groundY);
+    ctx.lineTo(m.x + m.w*0.16, groundY - m.h*0.36);
+    ctx.lineTo(m.x + m.w*0.4, groundY - m.h*0.78);
+    ctx.lineTo(m.x + m.w*0.68, groundY - m.h*0.48);
+    ctx.lineTo(m.x + m.w, groundY);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.strokeStyle=COLORS.grid;
+  ctx.lineWidth = 1;
+  for(let x=-((state.time * state.speed * 0.4) % 40); x<W; x+=40){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+  }
+
+  ctx.fillStyle='rgba(10,20,48,.75)';
+  ctx.fillRect(0,0,W,ceilingY-8);
+
+  const groundGrad = ctx.createLinearGradient(0, groundY, 0, H);
+  groundGrad.addColorStop(0, COLORS.ground);
+  groundGrad.addColorStop(1, '#162a59');
+  ctx.fillStyle=groundGrad;
+  ctx.fillRect(0,groundY,W,H-groundY);
+
+  ctx.strokeStyle=COLORS.groundEdge;
+  ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(0,groundY); ctx.lineTo(W,groundY); ctx.stroke();
+
+  ctx.globalAlpha = .18;
+  for(let x=-((state.time * state.speed * 0.7) % 28); x<W+28; x+=28){
+    ctx.fillStyle = 'rgba(255,255,255,.14)';
+    ctx.fillRect(x, groundY+6, 14, 2);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawPlatform(p){
+  ctx.save();
+  ctx.shadowBlur=18;
+  ctx.shadowColor='rgba(143,182,255,.65)';
+  const y = p.y + Math.sin(p.glow)*1.5;
+  const grad = ctx.createLinearGradient(0, y, 0, y+p.h);
+  grad.addColorStop(0, 'rgba(180,210,255,.34)');
+  grad.addColorStop(1, 'rgba(90,130,255,.22)');
+  ctx.fillStyle=grad;
+  ctx.fillRect(p.x,y,p.w,p.h);
+  ctx.strokeStyle='rgba(230,240,255,.95)';
+  ctx.lineWidth=2;
+  ctx.strokeRect(p.x,y,p.w,p.h);
+  ctx.globalAlpha = .32;
+  for(let x=p.x+8; x<p.x+p.w-8; x+=18){
+    ctx.fillStyle='#fff';
+    ctx.fillRect(x,y+4,8,2);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+function drawPortal(p){
+  const color = p.kind==='gravity' ? COLORS.gold : (p.kind==='jetpack' ? COLORS.cyan : COLORS.lime);
+  const cx = p.x + p.w/2;
+  const wave = Math.sin(state.time*0.08 + p.x*0.03);
+
+  ctx.save();
+  ctx.shadowBlur=30;
+  ctx.shadowColor=color;
+
+  const fillGrad = ctx.createLinearGradient(p.x, 0, p.x+p.w, 0);
+  fillGrad.addColorStop(0, 'rgba(255,255,255,.12)');
+  fillGrad.addColorStop(.35, color);
+  fillGrad.addColorStop(.65, '#ffffff');
+  fillGrad.addColorStop(1, color);
+  ctx.fillStyle=fillGrad;
+  ctx.globalAlpha = 0.28 + (wave+1)*0.06;
+  ctx.fillRect(p.x, 0, p.w, H);
+  ctx.globalAlpha = 1;
+
+  ctx.strokeStyle=color;
+  ctx.lineWidth=4;
+  ctx.strokeRect(p.x+2, 0, p.w-4, H);
+
+  for(let y=18; y<H; y+=34){
+    ctx.save();
+    ctx.translate(cx, y);
+    ctx.rotate((state.time*0.05*(p.kind==='gravity' ? -1 : 1)) + y*0.015);
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.arc(0,0,10,0,Math.PI*2);
+    ctx.stroke();
+    ctx.lineWidth=1.8;
+    ctx.beginPath();
+    ctx.arc(0,0,18,0,Math.PI*2);
+    ctx.stroke();
+    for(let i=0;i<6;i++){
+      const a=i*Math.PI/3;
+      ctx.fillStyle=color;
+      ctx.fillRect(Math.cos(a)*10-2, Math.sin(a)*10-2, 4, 4);
+    }
+    if(p.kind==='gravity'){
+      ctx.strokeStyle='rgba(255,255,255,.95)';
+      ctx.lineWidth=1.6;
+      ctx.beginPath();
+      ctx.moveTo(-6,-1); ctx.lineTo(0,-9); ctx.lineTo(6,-1);
+      ctx.moveTo(-6,1); ctx.lineTo(0,9); ctx.lineTo(6,1);
+      ctx.stroke();
+      ctx.strokeStyle=color;
+    } else if(p.kind==='jetpack'){
+      ctx.strokeStyle='rgba(255,255,255,.95)';
+      ctx.lineWidth=1.6;
+      ctx.strokeRect(-5,-7,10,14);
+      ctx.beginPath();
+      ctx.moveTo(-4,7); ctx.lineTo(-1,12); ctx.lineTo(-6,12);
+      ctx.moveTo(4,7); ctx.lineTo(1,12); ctx.lineTo(6,12);
+      ctx.stroke();
+      ctx.strokeStyle=color;
+    }
+    ctx.restore();
+  }
+
+  ctx.globalAlpha = .22;
+  for(let i=0;i<3;i++){
+    ctx.fillStyle = color;
+    ctx.fillRect(p.x - 10 - i*8, 0, 3, H);
+    ctx.fillRect(p.x + p.w + 7 + i*8, 0, 3, H);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+function drawObstacle(o){
+  const color = phaseColor(o.phase);
+  const transferGlow = state.phaseTransfer && state.phaseTransfer.obstacle === o;
+  ctx.save();
+  ctx.shadowBlur = transferGlow ? 30 : 20;
+  ctx.shadowColor = transferGlow ? COLORS.gold : color;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = transferGlow ? COLORS.gold : 'rgba(255,255,255,.82)';
+  ctx.lineWidth = transferGlow ? 2.6 : 1.6;
+
+  if(o.type==='spike' || o.type==='ceilingSpike'){
+    const down = o.type==='ceilingSpike';
+    ctx.beginPath();
+    if(!down){
+      ctx.moveTo(o.x, o.y+o.h); ctx.lineTo(o.x+o.w/2, o.y); ctx.lineTo(o.x+o.w, o.y+o.h);
+    } else {
+      ctx.moveTo(o.x, o.y); ctx.lineTo(o.x+o.w/2, o.y+o.h); ctx.lineTo(o.x+o.w, o.y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.globalAlpha=.25;
+    ctx.fillStyle='#fff';
+    ctx.beginPath();
+    if(!down){
+      ctx.moveTo(o.x+6, o.y+o.h-2); ctx.lineTo(o.x+o.w/2, o.y+8); ctx.lineTo(o.x+o.w-6, o.y+o.h-2);
+    } else {
+      ctx.moveTo(o.x+6, o.y+2); ctx.lineTo(o.x+o.w/2, o.y+o.h-8); ctx.lineTo(o.x+o.w-6, o.y+2);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha=1;
+  } else if(o.type==='diamond'){
+    ctx.translate(o.x+o.w/2,o.y+o.h/2);
+    ctx.rotate(Math.PI/4);
+    const grad = ctx.createLinearGradient(-o.w/2, -o.h/2, o.w/2, o.h/2);
+    grad.addColorStop(0, '#fff');
+    grad.addColorStop(.22, color);
+    grad.addColorStop(1, color);
+    ctx.fillStyle = grad;
+    ctx.fillRect(-o.w/2,-o.h/2,o.w,o.h);
+    ctx.strokeRect(-o.w/2,-o.h/2,o.w,o.h);
+  } else {
+    const r=7;
+    const grad = ctx.createLinearGradient(0, o.y, 0, o.y+o.h);
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(.18, color);
+    grad.addColorStop(1, color);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(o.x+r,o.y); ctx.lineTo(o.x+o.w-r,o.y); ctx.quadraticCurveTo(o.x+o.w,o.y,o.x+o.w,o.y+r);
+    ctx.lineTo(o.x+o.w,o.y+o.h-r); ctx.quadraticCurveTo(o.x+o.w,o.y+o.h,o.x+o.w-r,o.y+o.h);
+    ctx.lineTo(o.x+r,o.y+o.h); ctx.quadraticCurveTo(o.x,o.y+o.h,o.x,o.y+o.h-r);
+    ctx.lineTo(o.x,o.y+r); ctx.quadraticCurveTo(o.x,o.y,o.x+r,o.y); ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawPickup(p){
+  const y=p.y+Math.sin(p.bob)*8;
+  ctx.save(); ctx.translate(p.x,y); ctx.rotate(p.bob); ctx.shadowBlur=20; ctx.shadowColor=COLORS.gold; ctx.fillStyle=COLORS.gold;
+  ctx.beginPath();
+  for(let i=0;i<8;i++){ const a=i*Math.PI/4, rad=i%2===0?11:5, px=Math.cos(a)*rad, py=Math.sin(a)*rad; if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py); }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function drawParticles(){
+  for(const p of state.particles){
+    ctx.globalAlpha = Math.max(0, p.life/36);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawPlayer(){
+  for(const t of player.trail){
+    if(t.alpha<=0) continue;
+    ctx.globalAlpha=t.alpha;
+    ctx.fillStyle=phaseColor(t.phase);
+    ctx.fillRect(t.x-t.size/2, t.y-t.size/2, t.size, t.size);
+  }
+  ctx.globalAlpha=1;
+
+  ctx.save();
+  ctx.translate(player.x+player.w/2, player.y+player.h/2);
+  ctx.rotate(player.rotation);
+  ctx.scale(player.scaleX, player.scaleY);
+  ctx.shadowBlur=26;
+  ctx.shadowColor = state.mode===1 ? COLORS.lime : phaseColor(state.phase);
+
+  const faceGrad = ctx.createLinearGradient(-player.w/2, -player.h/2, player.w/2, player.h/2);
+  faceGrad.addColorStop(0, '#ffffff');
+  faceGrad.addColorStop(1, '#dfe8ff');
+  ctx.fillStyle=faceGrad;
+  ctx.fillRect(-player.w/2,-player.h/2,player.w,player.h);
+
+  ctx.fillStyle=phaseColor(state.phase);
+  ctx.fillRect(-player.w/2,-player.h/2,7,player.h);
+  ctx.fillRect(player.w/2-7,-player.h/2,7,player.h);
+
+  ctx.globalAlpha=.18;
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-player.w/2+8,-player.h/2+6,player.w-16,6);
+  ctx.globalAlpha=1;
+
+  ctx.fillStyle=COLORS.dark;
+  ctx.fillRect(-8,-6,4,4);
+  ctx.fillRect(4,-6,4,4);
+  ctx.fillRect(-5,5,10,3);
+
+  if(state.mode===1){
+    ctx.strokeStyle=COLORS.lime;
+    ctx.lineWidth=2;
+    for(let i=0;i<4;i++){
+      const y=-12+i*8;
+      ctx.beginPath(); ctx.moveTo(-player.w/2,y); ctx.lineTo(-player.w/2-7,y-4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(player.w/2,y); ctx.lineTo(player.w/2+7,y-4); ctx.stroke();
+    }
+  } else if(state.mode===2){
+    ctx.fillStyle = COLORS.cyan;
+    ctx.fillRect(-player.w/2-5,-4,5,10);
+    ctx.fillRect(player.w/2,-4,5,10);
+    ctx.fillStyle = COLORS.gold;
+    ctx.fillRect(-player.w/2-4,6,3,8);
+    ctx.fillRect(player.w/2+2,6,3,8);
+  }
+  ctx.restore();
+}
+function drawHUDOverlay(){}
+function drawOverlay(){
+  // Score always visible
+  ctx.save();
+  ctx.textAlign='left';
+  ctx.fillStyle='rgba(255,255,255,.96)';
+  ctx.font='bold 22px system-ui';
+  ctx.shadowBlur=12;
+  ctx.shadowColor=phaseColor(state.phase);
+  const shownScore = state.started ? Math.floor(state.score) : Math.floor(state.menuScore || 0);
+  ctx.fillText('Score: ' + shownScore, 18, 32);
+  ctx.fillText('Best: ' + best, 18, 58);
+  ctx.restore();
+
+  if(!state.started){
+    ctx.fillStyle='rgba(0,0,0,.34)';
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+
+    if(state.showHelp){
+      ctx.fillStyle='rgba(8,14,32,.92)';
+      ctx.beginPath();
+      ctx.roundRect(110, 55, W-220, H-110, 22);
+      ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.14)';
+      ctx.lineWidth=2;
+      ctx.stroke();
+
+      ctx.fillStyle='#fff';
+      ctx.font='bold 34px system-ui';
+      ctx.fillText('How To Play', W/2, 100);
+
+      ctx.textAlign='left';
+      ctx.font='18px system-ui';
+      ctx.fillStyle='rgba(255,255,255,.92)';
+      const lines = [
+        'Basic movement: Space / Up to jump.',
+        'Color rule: same-color hazard kills you. Opposite-color hazard is safe, and you switch color after exiting it.',
+        'Platforms: normal mode and spider can use floating platforms. Jetpack can land on top of them. Spider can collect stars too.',
+        'Spider portal: switches into spider mode. Press jump to snap between floor, ceiling, and valid platform surfaces.',
+        'Gravity portal: flips gravity so the level becomes upside down. Another gravity portal flips it back.',
+        'Jetpack portal: hold jump to rise, release to let gravity pull you back down.',
+        'Stars: collect them for 75 points.',
+        'Portals: a portal event starts randomly, then the matching ending portal arrives later.',
+        'Lose: after crashing, you return to the menu.'
+      ];
+      let y = 145;
+      for(const line of lines){
+        ctx.fillText(line, 150, y);
+        y += 34;
+      }
+
+      const bx = W/2 - 95, by = H - 90, bw = 190, bh = 48;
+      state.backButton = {x:bx,y:by,w:bw,h:bh};
+      ctx.fillStyle='rgba(255,255,255,.08)';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 16);
+      ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.22)';
+      ctx.stroke();
+      ctx.textAlign='center';
+      ctx.fillStyle='#fff';
+      ctx.font='bold 22px system-ui';
+      ctx.fillText('Back', W/2, by + 31);
+      return;
+    }
+
+    ctx.fillStyle='#fff';
+    ctx.font='bold 54px system-ui';
+    ctx.fillText('Switch Runner', W/2, 170);
+    ctx.font='24px system-ui';
+    ctx.fillStyle='rgba(255,255,255,.92)';
+    ctx.fillText('Press Space To Start', W/2, 220);
+
+    const bx = W/2 - 110, by = 270, bw = 220, bh = 52;
+    state.menuButton = {x:bx,y:by,w:bw,h:bh};
+    ctx.fillStyle='rgba(255,255,255,.08)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw, bh, 16);
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.22)';
+    ctx.lineWidth=2;
+    ctx.stroke();
+    ctx.fillStyle='#fff';
+    ctx.font='bold 22px system-ui';
+    ctx.fillText('How To Play', W/2, by + 33);
+  }
+}
+function draw(){
+  const shakeX=(Math.random()-0.5)*state.cameraShake, shakeY=(Math.random()-0.5)*state.cameraShake;
+  ctx.save(); ctx.translate(shakeX, shakeY);
+  drawBackground();
+  for(const p of state.platforms) drawPlatform(p);
+  for(const po of state.portals) drawPortal(po);
+  for(const pk of state.pickups) drawPickup(pk);
+  for(const o of state.obstacles) drawObstacle(o);
+  drawParticles();
+  drawPlayer();
+  ctx.restore();
+  drawOverlay();
+}
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+
+window.addEventListener('keydown', e => {
+  if(e.code==='Space' || e.code==='ArrowUp'){
+    e.preventDefault();
+    if(!state.started){
+      if(!state.showHelp){
+        startFreshRun();
+        jump();
+      }
+    } else {
+      jump();
+    }
+  } else if(e.code==='Escape' && state.showHelp && !state.started){
+    state.showHelp = false;
+  }
+});
+window.addEventListener('keyup', e => {
+  if(e.code==='Space' || e.code==='ArrowUp') jetpackHeld = false;
+});
+
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
+  const x = (e.clientX - rect.left) * scaleX;
+  const y = (e.clientY - rect.top) * scaleY;
+
+  if(!state.started){
+    const b = state.showHelp ? state.backButton : state.menuButton;
+    if(x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h){
+      state.showHelp = !state.showHelp;
+    }
+  }
+});
+
+initBackground();
+reset();
+loop();
+</script>
+</body>
+</html>
