@@ -60,9 +60,9 @@ const COLORS = {
   bgTop:'#050c1a', bgBottom:'#1a3169', mountain1:'#0a1532', mountain2:'#152655',
   grid:'rgba(255,255,255,.05)', ground:'#27468d', groundEdge:'rgba(255,255,255,.24)',
   cyan:'#37f0ff', magenta:'#ff5ae0', gold:'#ffd166', white:'#f8fbff', dark:'#0a1020',
-  lime:'#82ff9a', red:'#ff6b6b', platform:'#8fb6ff', glow:'rgba(255,255,255,.12)'
+  lime:'#82ff9a', purple:'#b38cff', forest:'#228b22', red:'#ff6b6b', platform:'#8fb6ff', glow:'rgba(255,255,255,.12)'
 };
-const PHASES = ['cyan','magenta'];
+const PHASES = ['cyan','magenta','forest'];
 const MODES = ['runner','spider','jetpack'];
 
 let best = Number(localStorage.getItem('pulsePrismDXBest') || 0);
@@ -73,6 +73,7 @@ const state = {
   particles:[], stars:[], mountains:[], obstacles:[], platforms:[], pickups:[], portals:[],
   phaseTransfer:null, portalEventActive:false, nextPortalEvent:900,
   portalExitDueTime:null, portalExitKind:null,
+  forestMode:false,
   spiderSide:'floor',
   spiderTransitFrames:0,
   jetpackThrust:0,
@@ -97,7 +98,7 @@ function emit(x,y,color,count=8,spread=3){
 }
 function reset(){
   state.started=false; state.gameOver=false; state.speed=6.1; state.time=0; state.cameraShake=0;
-  state.phase=0; state.mode=0; state.gravityDir=1; state.particles=[]; state.obstacles=[]; state.platforms=[]; state.pickups=[]; state.portals=[]; state.phaseTransfer=null; state.portalEventActive=false; state.nextPortalEvent=900; state.portalExitDueTime=null; state.portalExitKind=null; state.spiderSide='floor'; state.spiderTransitFrames=0; state.jetpackThrust=0; state.lastGroundHazard=''; state.showHelp=false;
+  state.phase=0; state.mode=0; state.gravityDir=1; state.particles=[]; state.obstacles=[]; state.platforms=[]; state.pickups=[]; state.portals=[]; state.phaseTransfer=null; state.portalEventActive=false; state.nextPortalEvent=900; state.portalExitDueTime=null; state.portalExitKind=null; state.forestMode=false; state.spiderSide='floor'; state.spiderTransitFrames=0; state.jetpackThrust=0; state.lastGroundHazard=''; state.showHelp=false;
   player.x=160; player.y=groundY-player.h; player.vy=0; player.onGround=true; player.onCeiling=false; player.scaleX=1; player.scaleY=1; player.rotation=0; player.targetRotation=0; player.trail=[];
   updateLabels();
 }
@@ -187,7 +188,7 @@ function jump(){
   }
 }
 function spawnObstacle(type, x=W+40, y=null){
-  const phase = Math.random()<0.5 ? 0 : 1;
+  const phase = state.forestMode ? 2 : (Math.random()<0.5 ? 0 : 1);
   const o = {type,x,phase,passed:false};
   if(type==='spike'){ o.w=34; o.h=36; o.y=(y ?? (groundY - o.h)); }
   else if(type==='block'){ o.w=48; o.h=48; o.y=(y ?? (groundY - o.h)); }
@@ -248,6 +249,11 @@ function spawnJetpackPortal(start=false){
   const portalX = W + 60;
   clearPortalSpace(portalX);
   state.portals.push({x: portalX,y:0,w:28,h:H,kind:'jetpack',ttl:720,ender:!start,triggered:false});
+}
+function spawnForestPortal(start=false){
+  const portalX = W + 60;
+  clearPortalSpace(portalX);
+  state.portals.push({x: portalX,y:0,w:28,h:H,kind:'forest',ttl:720,ender:!start,triggered:false});
 }
 function spawnEndPortal(kind){
   const portalX = W + 60;
@@ -515,7 +521,8 @@ function update(){
     const portalRight = po.x + po.w + portalBuffer;
     return nextSpawnX >= portalLeft && nextSpawnX <= portalRight;
   });
-  if(lastSolidX < W-145 && !portalTooClose){
+  const spawnSpacingMultiplier = state.forestMode ? 1.3 : 1;
+  if(lastSolidX < W-(145 * spawnSpacingMultiplier) && !portalTooClose){
     const r=Math.random();
     if(state.mode===0){
       if(state.gravityDir===1){
@@ -565,11 +572,12 @@ function update(){
   // After you hit it, the matching end portal appears exactly 12s later.
   if(!state.portalEventActive && state.time >= state.nextPortalEvent){
     state.portalEventActive = true;
-    const portalKinds = ['spider','gravity','jetpack'];
+    const portalKinds = ['spider','gravity','jetpack','forest'];
     const chosen = portalKinds[Math.floor(Math.random() * portalKinds.length)];
     if(chosen === 'spider') spawnSpiderPortal(true);
     else if(chosen === 'gravity') spawnGravityPortal(true);
-    else spawnJetpackPortal(true);
+    else if(chosen === 'jetpack') spawnJetpackPortal(true);
+    else spawnForestPortal(true);
   }
 
   if(Math.random()<0.006 && (state.pickups.length===0 || state.pickups[state.pickups.length-1].x < W-260) && !portalTooClose) spawnPickup();
@@ -669,6 +677,26 @@ function update(){
           state.portalExitKind = null;
           state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
         }
+      } else if(po.kind==='forest'){
+        state.forestMode = !state.forestMode;
+        state.phase = state.forestMode ? 2 : 0;
+        for(const o of state.obstacles){
+          o.phase = state.forestMode ? 2 : (Math.random() < 0.5 ? 0 : 1);
+        }
+        updateLabels();
+        state.cameraShake=7;
+        emit(player.x+player.w/2, player.y+player.h/2, COLORS.forest, 22, 7);
+        player.scaleX=0.88; player.scaleY=1.16;
+
+        if(!po.ender){
+          state.portalExitDueTime = state.time + 720;
+          state.portalExitKind = 'forest';
+        } else {
+          state.portalEventActive = false;
+          state.portalExitDueTime = null;
+          state.portalExitKind = null;
+          state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
+        }
       }
     }
     if(po.hitCooldown) po.hitCooldown -= 1;
@@ -685,7 +713,9 @@ function update(){
     if(!o.passed && o.x + o.w < player.x){ o.passed=true; state.score += 2; }
     const hit = rectsIntersect(pr, obstacleRect(o));
     if(hit){
-      if(o.phase === state.phase){
+      if(state.forestMode){
+        if(o.phase === 2) endGame();
+      } else if(o.phase === state.phase){
         endGame();
       } else if(!state.phaseTransfer || state.phaseTransfer.obstacle !== o){
         startPhaseTransfer(o);
@@ -792,7 +822,7 @@ function drawPlatform(p){
   ctx.restore();
 }
 function drawPortal(p){
-  const color = p.kind==='gravity' ? COLORS.gold : (p.kind==='jetpack' ? COLORS.cyan : COLORS.lime);
+  const color = p.kind==='gravity' ? COLORS.gold : (p.kind==='jetpack' ? COLORS.cyan : (p.kind==='forest' ? COLORS.forest : COLORS.purple));
   const cx = p.x + p.w/2;
   const wave = Math.sin(state.time*0.08 + p.x*0.03);
 
@@ -846,6 +876,15 @@ function drawPortal(p){
       ctx.beginPath();
       ctx.moveTo(-4,7); ctx.lineTo(-1,12); ctx.lineTo(-6,12);
       ctx.moveTo(4,7); ctx.lineTo(1,12); ctx.lineTo(6,12);
+      ctx.stroke();
+      ctx.strokeStyle=color;
+    } else if(p.kind==='forest'){
+      ctx.strokeStyle='rgba(255,255,255,.95)';
+      ctx.lineWidth=1.6;
+      ctx.beginPath();
+      ctx.moveTo(0,-10); ctx.lineTo(-7,1); ctx.lineTo(7,1); ctx.closePath();
+      ctx.moveTo(0,-4); ctx.lineTo(-6,7); ctx.lineTo(6,7); ctx.closePath();
+      ctx.moveTo(0,7); ctx.lineTo(0,12);
       ctx.stroke();
       ctx.strokeStyle=color;
     }
@@ -949,7 +988,7 @@ function drawPlayer(){
   ctx.rotate(player.rotation);
   ctx.scale(player.scaleX, player.scaleY);
   ctx.shadowBlur=26;
-  ctx.shadowColor = state.mode===1 ? COLORS.lime : phaseColor(state.phase);
+  ctx.shadowColor = state.mode===1 ? COLORS.purple : phaseColor(state.phase);
 
   const faceGrad = ctx.createLinearGradient(-player.w/2, -player.h/2, player.w/2, player.h/2);
   faceGrad.addColorStop(0, '#ffffff');
@@ -972,7 +1011,7 @@ function drawPlayer(){
   ctx.fillRect(-5,5,10,3);
 
   if(state.mode===1){
-    ctx.strokeStyle=COLORS.lime;
+    ctx.strokeStyle=COLORS.purple;
     ctx.lineWidth=2;
     for(let i=0;i<4;i++){
       const y=-12+i*8;
@@ -1028,9 +1067,10 @@ function drawOverlay(){
         'Basic movement: Space / Up to jump.',
         'Color rule: same-color hazard kills you. Opposite-color hazard is safe, and you switch color after exiting it.',
         'Platforms: normal mode and spider can use floating platforms. Jetpack can land on top of them. Spider can collect stars too.',
-        'Spider portal: switches into spider mode. Press jump to snap between floor, ceiling, and valid platform surfaces.',
+        'Spider portal (purple): switches into spider mode. Press jump to snap between floor, ceiling, and valid platform surfaces.',
         'Gravity portal: flips gravity so the level becomes upside down. Another gravity portal flips it back.',
         'Jetpack portal: hold jump to rise, release to let gravity pull you back down.',
+        'Forest portal: turns you and spawned hazards forest green. In forest mode you only die to forest hazards, and spacing increases 1.3x.',
         'Stars: collect them for 75 points.',
         'Portals: a portal event starts randomly, then the matching ending portal arrives later.',
         'Lose: after crashing, you return to the menu.'
