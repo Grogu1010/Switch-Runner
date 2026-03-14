@@ -679,7 +679,6 @@ function update(){
         }
       } else if(po.kind==='forest'){
         state.forestMode = !state.forestMode;
-        state.phase = state.forestMode ? 2 : 0;
         for(const o of state.obstacles){
           o.phase = state.forestMode ? 2 : (Math.random() < 0.5 ? 0 : 1);
         }
@@ -713,9 +712,7 @@ function update(){
     if(!o.passed && o.x + o.w < player.x){ o.passed=true; state.score += 2; }
     const hit = rectsIntersect(pr, obstacleRect(o));
     if(hit){
-      if(state.forestMode){
-        if(o.phase === 2) endGame();
-      } else if(o.phase === state.phase){
+      if(o.phase === state.phase){
         endGame();
       } else if(!state.phaseTransfer || state.phaseTransfer.obstacle !== o){
         startPhaseTransfer(o);
