@@ -85,6 +85,7 @@ const state = {
   nextMovingPlatformChance:1/8,
   playerOnPlatform:false,
   jumpStartedFromPlatform:false,
+  platformDropChainActive:false,
   platformJumpBonus:35
 };
 
@@ -103,7 +104,7 @@ function emit(x,y,color,count=8,spread=3){
 function reset(){
   state.started=false; state.gameOver=false; state.speed=6.1; state.time=0; state.cameraShake=0;
   state.phase=0; state.mode=0; state.gravityDir=1; state.particles=[]; state.obstacles=[]; state.platforms=[]; state.pickups=[]; state.portals=[]; state.phaseTransfer=null; state.portalEventActive=false; state.nextPortalEvent=900; state.portalExitDueTime=null; state.portalExitKind=null; state.forestMode=false; state.spiderSide='floor'; state.spiderTransitFrames=0; state.jetpackThrust=0; state.lastGroundHazard=''; state.showHelp=false;
-  state.nextMovingPlatformChance=1/8; state.playerOnPlatform=false; state.jumpStartedFromPlatform=false; state.platformJumpBonus=35;
+  state.nextMovingPlatformChance=1/8; state.playerOnPlatform=false; state.jumpStartedFromPlatform=false; state.platformDropChainActive=false; state.platformJumpBonus=35;
   player.x=160; player.y=groundY-player.h; player.vy=0; player.onGround=true; player.onCeiling=false; player.scaleX=1; player.scaleY=1; player.rotation=0; player.targetRotation=0; player.trail=[];
   updateLabels();
 }
@@ -302,11 +303,15 @@ function getSupportingPlatform(){
   return null;
 }
 
-function handlePlatformJumpCombo(wasSupported){
+function handlePlatformJumpCombo(wasOnPlatform){
   const isSupported = player.onGround || player.onCeiling;
-  const justLandedOnPlatform = state.playerOnPlatform && !wasSupported && isSupported;
+  if(wasOnPlatform && !isSupported){
+    state.platformDropChainActive = true;
+  }
+
+  const justLandedOnPlatform = state.playerOnPlatform && !wasOnPlatform;
   if(justLandedOnPlatform){
-    if(state.jumpStartedFromPlatform){
+    if(state.jumpStartedFromPlatform || state.platformDropChainActive){
       state.platformJumpBonus += 5;
     } else {
       state.platformJumpBonus = 35;
@@ -314,11 +319,13 @@ function handlePlatformJumpCombo(wasSupported){
     state.score += state.platformJumpBonus;
     emit(player.x + player.w/2, player.y + player.h/2, COLORS.gold, 14, 4);
     state.jumpStartedFromPlatform = false;
+    state.platformDropChainActive = false;
   }
 
   if(!state.playerOnPlatform && isSupported){
     state.platformJumpBonus = 35;
     state.jumpStartedFromPlatform = false;
+    state.platformDropChainActive = false;
   }
 }
 
@@ -588,7 +595,7 @@ function update(){
   // speed no longer increases
 
 
-  const wasSupported = player.onGround || player.onCeiling;
+  const wasOnPlatform = state.playerOnPlatform;
   if(state.mode===0) updateRunnerPhysics(); else if(state.mode===1) updateSpiderPhysics(); else updateJetpackPhysics();
   const supportingPlatform = getSupportingPlatform();
   if(supportingPlatform){
@@ -599,7 +606,7 @@ function update(){
     player.y += platformDeltaY;
   }
   state.playerOnPlatform = detectPlayerOnPlatform();
-  handlePlatformJumpCombo(wasSupported);
+  handlePlatformJumpCombo(wasOnPlatform);
   player.rotation += (player.targetRotation - player.rotation) * 0.22;
 
   player.trail.push({x:player.x+player.w/2,y:player.y+player.h/2,alpha:0.42,phase:state.phase,size:state.mode===1?18:14});
@@ -732,6 +739,7 @@ function update(){
       }
       po.hitCooldown = 12;
       po.triggered = true;
+      state.score += 100;
 
       if(po.kind==='spider'){
         state.mode = state.mode===1 ? 0 : 1;
