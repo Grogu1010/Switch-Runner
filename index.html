@@ -81,7 +81,11 @@ const state = {
   showHelp:false,
   menuScore:0,
   menuButton:{x:0,y:0,w:0,h:0},
-  backButton:{x:0,y:0,w:0,h:0}
+  backButton:{x:0,y:0,w:0,h:0},
+  nextMovingPlatformChance:1/8,
+  playerOnPlatform:false,
+  jumpStartedFromPlatform:false,
+  platformJumpBonus:35
 };
 
 const player = {
@@ -99,6 +103,7 @@ function emit(x,y,color,count=8,spread=3){
 function reset(){
   state.started=false; state.gameOver=false; state.speed=6.1; state.time=0; state.cameraShake=0;
   state.phase=0; state.mode=0; state.gravityDir=1; state.particles=[]; state.obstacles=[]; state.platforms=[]; state.pickups=[]; state.portals=[]; state.phaseTransfer=null; state.portalEventActive=false; state.nextPortalEvent=900; state.portalExitDueTime=null; state.portalExitKind=null; state.forestMode=false; state.spiderSide='floor'; state.spiderTransitFrames=0; state.jetpackThrust=0; state.lastGroundHazard=''; state.showHelp=false;
+  state.nextMovingPlatformChance=1/8; state.playerOnPlatform=false; state.jumpStartedFromPlatform=false; state.platformJumpBonus=35;
   player.x=160; player.y=groundY-player.h; player.vy=0; player.onGround=true; player.onCeiling=false; player.scaleX=1; player.scaleY=1; player.rotation=0; player.targetRotation=0; player.trail=[];
   updateLabels();
 }
@@ -133,6 +138,12 @@ function jump(){
   state.started=true;
   if(state.mode===0){
     if(player.onGround || player.onCeiling){
+      if(state.playerOnPlatform){
+        state.jumpStartedFromPlatform = true;
+      } else {
+        state.jumpStartedFromPlatform = false;
+        state.platformJumpBonus = 35;
+      }
       player.vy = -player.jumpPower * state.gravityDir;
       player.onGround=false;
       player.onCeiling=false;
@@ -141,6 +152,12 @@ function jump(){
       emit(player.x+8, dustY, phaseColor(state.phase), 8, 3);
     }
   } else if(state.mode===1){
+    if(state.playerOnPlatform){
+      state.jumpStartedFromPlatform = true;
+    } else {
+      state.jumpStartedFromPlatform = false;
+      state.platformJumpBonus = 35;
+    }
     let targetY;
     if(state.spiderSide === 'floor'){
       targetY = ceilingY;
@@ -206,7 +223,7 @@ function spawnObstacle(type, x=W+40, y=null){
 function spawnPlatform(){
   const w=120+Math.random()*80, h=18;
   const maxRise = 150;
-  const moving = Math.random() < (1/15);
+  const moving = Math.random() < state.nextMovingPlatformChance;
   const moveAxis = moving ? (Math.random() < 0.7 ? 'horizontal' : 'vertical') : null;
   let y;
   if(state.gravityDir===1){
@@ -218,19 +235,22 @@ function spawnPlatform(){
   }
   const platform = {x:W+40,y,w,h,glow:Math.random()*6,moving,moveAxis};
   if(moving){
+    state.nextMovingPlatformChance = state.nextMovingPlatformChance <= (1/8) ? 0.5 : Math.max(1/32, state.nextMovingPlatformChance / 2);
     platform.movePhase = Math.random() * Math.PI * 2;
-    platform.moveSpeed = 0.03 + Math.random() * 0.025;
+    platform.moveSpeed = 0.06 + Math.random() * 0.04;
     if(moveAxis === 'horizontal'){
       platform.baseX = platform.x;
-      platform.moveAmplitude = 28 + Math.random() * 24;
+      platform.moveAmplitude = 64 + Math.random() * 48;
     } else {
       platform.baseY = y;
       const minY = state.gravityDir===1 ? (groundY - maxRise) : (ceilingY + 40);
       const maxY = state.gravityDir===1 ? (groundY - 48) : (ceilingY + maxRise);
       const roomUp = Math.max(0, platform.baseY - minY);
       const roomDown = Math.max(0, maxY - platform.baseY);
-      platform.moveAmplitude = Math.min(20 + Math.random() * 20, roomUp, roomDown);
+      platform.moveAmplitude = Math.min(42 + Math.random() * 30, roomUp, roomDown);
     }
+  } else {
+    state.nextMovingPlatformChance = 1/8;
   }
   state.platforms.push(platform);
 
@@ -243,39 +263,58 @@ function spawnPlatform(){
   }
 }
 function spawnPickup(){ state.pickups.push({x:W+20,y:groundY-130-Math.random()*160,r:11,bob:Math.random()*Math.PI*2}); }
-function clearPortalSpace(portalX){
-  const portalBuffer = 272; // about 8 spike widths
-  const minX = portalX - portalBuffer;
-  const maxX = portalX + 28 + portalBuffer;
+function isPortalIncomingSoon(){
+  const leadFrames = 170;
+  const startPortalSoon = !state.portalEventActive && (state.nextPortalEvent - state.time) <= leadFrames;
+  const endPortalSoon = state.portalEventActive && state.portalExitDueTime !== null && (state.portalExitDueTime - state.time) <= leadFrames;
+  return startPortalSoon || endPortalSoon;
+}
 
-  state.obstacles = state.obstacles.filter(o => (o.x + o.w) < minX || o.x > maxX);
-  state.platforms = state.platforms.filter(p => (p.x + p.w) < minX || p.x > maxX);
-  state.pickups = state.pickups.filter(p => (p.x + p.r) < minX || p.x - p.r > maxX);
+function detectPlayerOnPlatform(){
+  if(!(player.onGround || player.onCeiling)) return false;
+  for(const p of state.platforms){
+    const withinX = player.x + player.w > p.x + 8 && player.x < p.x + p.w - 8;
+    if(!withinX) continue;
+    if(state.gravityDir===1 && player.onGround && Math.abs((player.y + player.h) - p.y) <= 2) return true;
+    if(state.gravityDir===-1 && player.onCeiling && Math.abs(player.y - (p.y + p.h)) <= 2) return true;
+  }
+  return false;
+}
+
+function handlePlatformJumpCombo(wasSupported){
+  const isSupported = player.onGround || player.onCeiling;
+  if(!wasSupported || !isSupported) return;
+  if(state.playerOnPlatform){
+    if(state.jumpStartedFromPlatform){
+      state.score += state.platformJumpBonus;
+      emit(player.x + player.w/2, player.y + player.h/2, COLORS.gold, 14, 4);
+      state.platformJumpBonus += 5;
+      state.jumpStartedFromPlatform = false;
+    }
+  } else {
+    state.platformJumpBonus = 35;
+    state.jumpStartedFromPlatform = false;
+  }
 }
 
 function spawnSpiderPortal(start=false){
   const portalX = W + 60;
-  clearPortalSpace(portalX);
   state.portals.push({x: portalX,y:0,w:28,h:H,kind:'spider',ttl:720,ender:!start,triggered:false});
 }
 function spawnGravityPortal(start=false){
   const portalX = W + 60;
-  clearPortalSpace(portalX);
   state.portals.push({x: portalX,y:0,w:28,h:H,kind:'gravity',ttl:720,ender:!start,triggered:false});
 }
 function spawnJetpackPortal(start=false){
   const portalX = W + 60;
-  clearPortalSpace(portalX);
   state.portals.push({x: portalX,y:0,w:28,h:H,kind:'jetpack',ttl:720,ender:!start,triggered:false});
 }
 function spawnForestPortal(start=false){
   const portalX = W + 60;
-  clearPortalSpace(portalX);
   state.portals.push({x: portalX,y:0,w:28,h:H,kind:'forest',ttl:720,ender:!start,triggered:false});
 }
 function spawnEndPortal(kind){
   const portalX = W + 60;
-  clearPortalSpace(portalX);
   state.portals.push({x:portalX,y:0,w:28,h:H,kind,ttl:720,ender:true,triggered:false});
 }
 
@@ -522,7 +561,10 @@ function update(){
   // speed no longer increases
 
 
+  const wasSupported = player.onGround || player.onCeiling;
   if(state.mode===0) updateRunnerPhysics(); else if(state.mode===1) updateSpiderPhysics(); else updateJetpackPhysics();
+  state.playerOnPlatform = detectPlayerOnPlatform();
+  handlePlatformJumpCombo(wasSupported);
   player.rotation += (player.targetRotation - player.rotation) * 0.22;
 
   player.trail.push({x:player.x+player.w/2,y:player.y+player.h/2,alpha:0.42,phase:state.phase,size:state.mode===1?18:14});
@@ -539,7 +581,7 @@ function update(){
     const portalLeft = po.x - portalBuffer;
     const portalRight = po.x + po.w + portalBuffer;
     return nextSpawnX >= portalLeft && nextSpawnX <= portalRight;
-  });
+  }) || isPortalIncomingSoon();
   const spawnSpacingMultiplier = state.forestMode ? 1.15 : 1;
   if(lastSolidX < W-(145 * spawnSpacingMultiplier) && !portalTooClose){
     const r=Math.random();
