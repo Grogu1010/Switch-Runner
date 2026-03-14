@@ -379,7 +379,8 @@ function updateRunnerPhysics(){
       const prevBottom = player.y - player.vy + player.h;
       const newBottom = player.y + player.h;
       const crossingTop = prevBottom <= p.y && newBottom >= p.y;
-      if(player.vy >= 0 && withinX && crossingTop){
+      const platformLiftedIntoPlayer = newBottom > p.y && newBottom <= p.y + Math.max(10, Math.abs(p.deltaY || 0) + 6);
+      if(player.vy >= 0 && withinX && (crossingTop || platformLiftedIntoPlayer)){
         player.y = p.y - player.h;
         player.vy = 0;
         player.onGround = true;
@@ -389,7 +390,8 @@ function updateRunnerPhysics(){
       const newTop = player.y;
       const platformBottom = p.y + p.h;
       const crossingBottom = prevTop >= platformBottom && newTop <= platformBottom;
-      if(player.vy <= 0 && withinX && crossingBottom){
+      const platformLoweredIntoPlayer = newTop < platformBottom && newTop >= platformBottom - Math.max(10, Math.abs(p.deltaY || 0) + 6);
+      if(player.vy <= 0 && withinX && (crossingBottom || platformLoweredIntoPlayer)){
         player.y = platformBottom;
         player.vy = 0;
         player.onCeiling = true;
