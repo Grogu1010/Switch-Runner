@@ -521,7 +521,7 @@ function update(){
     const portalRight = po.x + po.w + portalBuffer;
     return nextSpawnX >= portalLeft && nextSpawnX <= portalRight;
   });
-  const spawnSpacingMultiplier = state.forestMode ? 1.3 : 1;
+  const spawnSpacingMultiplier = state.forestMode ? 1.15 : 1;
   if(lastSolidX < W-(145 * spawnSpacingMultiplier) && !portalTooClose){
     const r=Math.random();
     if(state.mode===0){
@@ -1067,7 +1067,7 @@ function drawOverlay(){
         'Spider portal (purple): switches into spider mode. Press jump to snap between floor, ceiling, and valid platform surfaces.',
         'Gravity portal: flips gravity so the level becomes upside down. Another gravity portal flips it back.',
         'Jetpack portal: hold jump to rise, release to let gravity pull you back down.',
-        'Forest portal: turns you and spawned hazards forest green. In forest mode you only die to forest hazards, and spacing increases 1.3x.',
+        'Forest portal: turns you and spawned hazards forest green. In forest mode you only die to forest hazards, and spacing increases 1.15x.',
         'Stars: collect them for 75 points.',
         'Portals: a portal event starts randomly, then the matching ending portal arrives later.',
         'Lose: after crashing, you return to the menu.'
