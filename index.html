@@ -220,6 +220,16 @@ function spawnObstacle(type, x=W+40, y=null){
     state.lastGroundHazard = 'spike';
   }
 }
+function spawnPlatformObstacle(type, platform){
+  const maxOffset = Math.max(0, platform.w - 50);
+  const anchorX = platform.x + 25 + Math.random() * maxOffset;
+  const anchorY = type === 'spike' ? (platform.y - 36) : (platform.y + platform.h);
+  spawnObstacle(type, anchorX, anchorY);
+  const obstacle = state.obstacles[state.obstacles.length - 1];
+  obstacle.anchorPlatform = platform;
+  obstacle.anchorOffsetX = obstacle.x - platform.x;
+  obstacle.anchorOffsetY = obstacle.y - platform.y;
+}
 function spawnPlatform(){
   const w=120+Math.random()*80, h=18;
   const maxRise = 150;
@@ -237,7 +247,7 @@ function spawnPlatform(){
   if(moving){
     state.nextMovingPlatformChance = state.nextMovingPlatformChance <= (1/8) ? 0.5 : Math.max(1/32, state.nextMovingPlatformChance / 2);
     platform.movePhase = Math.random() * Math.PI * 2;
-    platform.moveSpeed = 0.06 + Math.random() * 0.04;
+    platform.moveSpeed = 0.056;
     if(moveAxis === 'horizontal'){
       platform.baseX = platform.x;
       platform.moveAmplitude = 64 + Math.random() * 48;
@@ -255,11 +265,11 @@ function spawnPlatform(){
   state.platforms.push(platform);
 
   if(state.mode===1){
-    if(Math.random()<0.58) spawnObstacle('spike', W+55+Math.random()*(w-50), y-36);
-    if(Math.random()<0.58) spawnObstacle('ceilingSpike', W+55+Math.random()*(w-50), y+h);
+    if(Math.random()<0.58) spawnPlatformObstacle('spike', platform);
+    if(Math.random()<0.58) spawnPlatformObstacle('ceilingSpike', platform);
   } else if(Math.random()<0.42){
-    if(state.gravityDir===1) spawnObstacle('spike', W+55+Math.random()*(w-50), y-36);
-    else spawnObstacle('ceilingSpike', W+55+Math.random()*(w-50), y+h);
+    if(state.gravityDir===1) spawnPlatformObstacle('spike', platform);
+    else spawnPlatformObstacle('ceilingSpike', platform);
   }
 }
 function spawnPickup(){ state.pickups.push({x:W+20,y:groundY-130-Math.random()*160,r:11,bob:Math.random()*Math.PI*2}); }
@@ -279,6 +289,17 @@ function detectPlayerOnPlatform(){
     if(state.gravityDir===-1 && player.onCeiling && Math.abs(player.y - (p.y + p.h)) <= 2) return true;
   }
   return false;
+}
+
+function getSupportingPlatform(){
+  if(!(player.onGround || player.onCeiling)) return null;
+  for(const p of state.platforms){
+    const withinX = player.x + player.w > p.x + 8 && player.x < p.x + p.w - 8;
+    if(!withinX) continue;
+    if(state.gravityDir===1 && player.onGround && Math.abs((player.y + player.h) - p.y) <= 2) return p;
+    if(state.gravityDir===-1 && player.onCeiling && Math.abs(player.y - (p.y + p.h)) <= 2) return p;
+  }
+  return null;
 }
 
 function handlePlatformJumpCombo(wasSupported){
@@ -563,6 +584,13 @@ function update(){
 
   const wasSupported = player.onGround || player.onCeiling;
   if(state.mode===0) updateRunnerPhysics(); else if(state.mode===1) updateSpiderPhysics(); else updateJetpackPhysics();
+  const supportingPlatform = getSupportingPlatform();
+  if(supportingPlatform){
+    const platformDeltaX = supportingPlatform.deltaX || 0;
+    const platformDeltaY = supportingPlatform.deltaY || 0;
+    player.x += Math.min(0, platformDeltaX);
+    player.y += platformDeltaY;
+  }
   state.playerOnPlatform = detectPlayerOnPlatform();
   handlePlatformJumpCombo(wasSupported);
   player.rotation += (player.targetRotation - player.rotation) * 0.22;
@@ -643,20 +671,37 @@ function update(){
 
   if(Math.random()<0.006 && (state.pickups.length===0 || state.pickups[state.pickups.length-1].x < W-260) && !portalTooClose) spawnPickup();
 
-  for(const arr of [state.obstacles, state.platforms, state.pickups]){
-    for(const o of arr){
-      o.x -= state.speed;
-      if(o.bob !== undefined) o.bob += 0.08;
-      if(o.glow !== undefined) o.glow += 0.07;
-      if(o.moving){
-        o.movePhase += o.moveSpeed;
-        if(o.moveAxis === 'horizontal'){
-          o.x += Math.sin(o.movePhase) * (o.moveAmplitude * o.moveSpeed);
-        } else if(o.moveAxis === 'vertical'){
-          o.y = o.baseY + Math.sin(o.movePhase) * o.moveAmplitude;
-        }
+  for(const p of state.platforms){
+    p.prevX = p.x;
+    p.prevY = p.y;
+    p.x -= state.speed;
+    if(p.glow !== undefined) p.glow += 0.07;
+    if(p.moving){
+      p.movePhase += p.moveSpeed;
+      if(p.moveAxis === 'horizontal'){
+        p.x += Math.sin(p.movePhase) * (p.moveAmplitude * p.moveSpeed);
+      } else if(p.moveAxis === 'vertical'){
+        p.y = p.baseY + Math.sin(p.movePhase) * p.moveAmplitude;
       }
     }
+    p.deltaX = p.x - p.prevX;
+    p.deltaY = p.y - p.prevY;
+  }
+
+  for(const o of state.obstacles){
+    if(o.anchorPlatform && state.platforms.includes(o.anchorPlatform)){
+      const platformDeltaX = o.anchorPlatform.deltaX || -state.speed;
+      const platformDeltaY = o.anchorPlatform.deltaY || 0;
+      o.x += Math.min(0, platformDeltaX);
+      o.y += platformDeltaY;
+    } else {
+      o.x -= state.speed;
+    }
+  }
+
+  for(const p of state.pickups){
+    p.x -= state.speed;
+    if(p.bob !== undefined) p.bob += 0.08;
   }
   for(const po of state.portals){
     po.x -= state.speed;
