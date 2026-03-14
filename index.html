@@ -278,7 +278,7 @@ function maybeCompletePhaseTransfer(){
   if(!state.obstacles.includes(o)){ state.phaseTransfer=null; return; }
   if(player.x > o.x + o.w || player.x + player.w < o.x){
     state.phase = state.phaseTransfer.targetPhase;
-    state.score += 12;
+    state.score += 20;
     updateLabels();
     state.cameraShake = 4;
     emit(player.x+player.w/2, player.y+player.h/2, phaseColor(state.phase), 14, 5);
@@ -705,7 +705,7 @@ function update(){
   for(const p of state.pickups){
     const hitPickup = circleRectIntersect({x:p.x, y:p.y+Math.sin(p.bob)*8, r:p.r}, pr);
     if(hitPickup){
-      p.collected=true; state.score += 75; emit(p.x, p.y, COLORS.gold, 10, 4);
+      p.collected=true; state.score += 125; emit(p.x, p.y, COLORS.gold, 10, 4);
     }
   }
 
