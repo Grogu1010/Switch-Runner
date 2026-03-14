@@ -304,15 +304,19 @@ function getSupportingPlatform(){
 
 function handlePlatformJumpCombo(wasSupported){
   const isSupported = player.onGround || player.onCeiling;
-  if(!wasSupported || !isSupported) return;
-  if(state.playerOnPlatform){
+  const justLandedOnPlatform = state.playerOnPlatform && !wasSupported && isSupported;
+  if(justLandedOnPlatform){
     if(state.jumpStartedFromPlatform){
-      state.score += state.platformJumpBonus;
-      emit(player.x + player.w/2, player.y + player.h/2, COLORS.gold, 14, 4);
       state.platformJumpBonus += 5;
-      state.jumpStartedFromPlatform = false;
+    } else {
+      state.platformJumpBonus = 35;
     }
-  } else {
+    state.score += state.platformJumpBonus;
+    emit(player.x + player.w/2, player.y + player.h/2, COLORS.gold, 14, 4);
+    state.jumpStartedFromPlatform = false;
+  }
+
+  if(!state.playerOnPlatform && isSupported){
     state.platformJumpBonus = 35;
     state.jumpStartedFromPlatform = false;
   }
@@ -588,7 +592,8 @@ function update(){
   if(supportingPlatform){
     const platformDeltaX = supportingPlatform.deltaX || 0;
     const platformDeltaY = supportingPlatform.deltaY || 0;
-    player.x += Math.min(0, platformDeltaX);
+    const conveyorDeltaX = platformDeltaX + state.speed;
+    player.x += conveyorDeltaX;
     player.y += platformDeltaY;
   }
   state.playerOnPlatform = detectPlayerOnPlatform();
