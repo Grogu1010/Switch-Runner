@@ -336,7 +336,7 @@ function spawnPlatform(){
 }
 function spawnPickup(){ state.pickups.push({x:W+20,y:groundY-130-Math.random()*160,r:11,bob:Math.random()*Math.PI*2}); }
 function isPortalIncomingSoon(){
-  if(state.selectedGameMode !== GAME_MODES.classic) return false;
+  if(!state.started) return false;
   const leadFrames = 170;
   const startPortalSoon = !state.portalEventActive && (state.nextPortalEvent - state.time) <= leadFrames;
   const endPortalSoon = state.portalEventActive && state.portalExitDueTime !== null && (state.portalExitDueTime - state.time) <= leadFrames;
@@ -745,10 +745,12 @@ function update(){
 
   // Portal events: a start portal appears at a random interval around ~12s.
   // After you hit it, the matching end portal appears exactly 12s later.
-  if(state.selectedGameMode === GAME_MODES.classic && !state.portalEventActive && state.time >= state.nextPortalEvent){
+  if(!state.portalEventActive && state.time >= state.nextPortalEvent){
     state.portalEventActive = true;
     const portalKinds = ['spider','gravity','jetpack','forest','normal'];
-    const chosen = portalKinds[Math.floor(Math.random() * portalKinds.length)];
+    const chosen = state.selectedGameMode === GAME_MODES.portalTrials
+      ? (state.portalTrial?.kind || 'normal')
+      : portalKinds[Math.floor(Math.random() * portalKinds.length)];
     if(chosen === 'spider') spawnSpiderPortal(true);
     else if(chosen === 'gravity') spawnGravityPortal(true);
     else if(chosen === 'jetpack') spawnJetpackPortal(true);
@@ -795,7 +797,7 @@ function update(){
     if(po.ttl !== undefined) po.ttl -= 1;
   }
 
-  if(state.selectedGameMode === GAME_MODES.classic && state.portalEventActive && state.portalExitDueTime !== null && state.time >= state.portalExitDueTime){
+  if(state.portalEventActive && state.portalExitDueTime !== null && state.time >= state.portalExitDueTime){
     if(!state.portals.some(p => p.ender && p.kind === state.portalExitKind)){
       spawnEndPortal(state.portalExitKind);
     }
