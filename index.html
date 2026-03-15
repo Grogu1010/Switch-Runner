@@ -213,6 +213,27 @@ function restorePortalBaseline(){
   player.targetRotation = saved.targetRotation;
   state.portalBaseline = null;
 }
+
+function clampPlayerY(y){
+  return Math.max(ceilingY, Math.min(groundY - player.h, y));
+}
+
+function refreshSurfaceContacts(){
+  const floorY = groundY - player.h;
+  player.onGround = Math.abs(player.y - floorY) < 0.5;
+  player.onCeiling = Math.abs(player.y - ceilingY) < 0.5;
+}
+
+function mirrorPlayerYForGravity(newGravityDir){
+  if(newGravityDir === -1){
+    const distanceFromGround = Math.max(0, groundY - (player.y + player.h));
+    player.y = clampPlayerY(ceilingY + distanceFromGround);
+  } else {
+    const distanceFromCeiling = Math.max(0, player.y - ceilingY);
+    player.y = clampPlayerY((groundY - player.h) - distanceFromCeiling);
+  }
+  refreshSurfaceContacts();
+}
 function initBackground(){
   state.stars = Array.from({length:110},()=>({
     x:Math.random()*W,y:Math.random()*(H-20),r:Math.random()*2.2+0.3,s:Math.random()*0.6+0.15,
@@ -910,9 +931,7 @@ function update(){
           state.portalBaseline = capturePortalBaseline();
           state.mode = 0;
           state.gravityDir = -1;
-          player.onGround=false;
-          player.onCeiling=true;
-          player.y=ceilingY;
+          mirrorPlayerYForGravity(state.gravityDir);
           player.vy=0;
           player.targetRotation = -player.targetRotation;
           player.scaleX=0.92;
@@ -922,13 +941,7 @@ function update(){
         } else {
           state.gravityDir *= -1;
           player.vy=0; player.scaleX=0.92; player.scaleY=1.12; player.targetRotation = -player.targetRotation;
-          if(state.mode===0){
-            if(state.gravityDir===-1){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
-            else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
-          } else {
-            if(player.onGround){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
-            else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
-          }
+          mirrorPlayerYForGravity(state.gravityDir);
         }
 
         updateLabels();
@@ -1022,9 +1035,13 @@ function update(){
             o.phase = Math.random() < 0.5 ? 0 : 1;
           }
           player.vy = 0;
-          player.y = groundY - player.h;
-          player.onGround = true;
-          player.onCeiling = false;
+          if(hadBaseline){
+            refreshSurfaceContacts();
+          } else {
+            player.y = groundY - player.h;
+            player.onGround = true;
+            player.onCeiling = false;
+          }
           player.targetRotation = 0;
           player.rotation *= 0.35;
         } else {
