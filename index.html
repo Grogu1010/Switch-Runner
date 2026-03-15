@@ -91,6 +91,7 @@ const state = {
   particles:[], stars:[], mountains:[], obstacles:[], platforms:[], pickups:[], portals:[],
   phaseTransfer:null, portalEventActive:false, nextPortalEvent:900,
   portalExitDueTime:null, portalExitKind:null,
+  portalBaseline:null,
   forestMode:false,
   spiderSide:'floor',
   spiderTransitFrames:0,
@@ -138,6 +139,7 @@ function emit(x,y,color,count=8,spread=3){
 function reset(){
   state.started=false; state.gameOver=false; state.speed=6.1; state.time=0; state.cameraShake=0;
   state.phase=0; state.mode=0; state.gravityDir=1; state.particles=[]; state.obstacles=[]; state.platforms=[]; state.pickups=[]; state.portals=[]; state.phaseTransfer=null; state.portalEventActive=false; state.nextPortalEvent=900; state.portalExitDueTime=null; state.portalExitKind=null; state.forestMode=false; state.spiderSide='floor'; state.spiderTransitFrames=0; state.jetpackThrust=0; state.lastGroundHazard=''; state.showHelp=false;
+  state.portalBaseline=null;
   state.pendingRunStartFrames=0; state.portalTrial=null; state.portalIntroFrames=0;
   state.nextMovingPlatformChance=1/8; state.playerOnPlatform=false; state.jumpStartedFromPlatform=false; state.platformDropChainActive=false; state.platformJumpBonus=35;
   player.x=160; player.y=groundY-player.h; player.vy=0; player.onGround=true; player.onCeiling=false; player.scaleX=1; player.scaleY=1; player.rotation=0; player.targetRotation=0; player.trail=[];
@@ -176,6 +178,39 @@ function startFreshRun(){
     }
     player.vy = 0;
   }
+}
+
+function capturePortalBaseline(){
+  return {
+    mode: state.mode,
+    gravityDir: state.gravityDir,
+    forestMode: state.forestMode,
+    phase: state.phase,
+    spiderSide: state.spiderSide,
+    y: player.y,
+    vy: player.vy,
+    onGround: player.onGround,
+    onCeiling: player.onCeiling,
+    rotation: player.rotation,
+    targetRotation: player.targetRotation
+  };
+}
+
+function restorePortalBaseline(){
+  if(!state.portalBaseline) return;
+  const saved = state.portalBaseline;
+  state.mode = saved.mode;
+  state.gravityDir = saved.gravityDir;
+  state.forestMode = saved.forestMode;
+  state.phase = saved.phase;
+  state.spiderSide = saved.spiderSide;
+  player.y = saved.y;
+  player.vy = saved.vy;
+  player.onGround = saved.onGround;
+  player.onCeiling = saved.onCeiling;
+  player.rotation = saved.rotation;
+  player.targetRotation = saved.targetRotation;
+  state.portalBaseline = null;
 }
 function initBackground(){
   state.stars = Array.from({length:110},()=>({
@@ -822,23 +857,42 @@ function update(){
       state.score += 100;
 
       if(po.kind==='spider'){
-        state.mode = state.mode===1 ? 0 : 1;
+        const isNormalState = state.mode===0 && state.gravityDir===1 && !state.forestMode;
+        const isIncompatible = state.mode===2 || state.gravityDir===-1 || isNormalState;
+
+        if(!po.ender && isIncompatible){
+          state.portalBaseline = capturePortalBaseline();
+          state.mode = 1;
+          state.gravityDir = 1;
+          if(player.y < H/2){ player.onCeiling=true; player.onGround=false; player.y=ceilingY; state.spiderSide='ceiling'; }
+          else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; state.spiderSide='floor'; }
+          player.vy=0;
+          player.targetRotation += Math.PI;
+          player.scaleX=0.88;
+          player.scaleY=1.16;
+        } else if(po.ender && state.portalBaseline){
+          restorePortalBaseline();
+          player.scaleX=1.12;
+          player.scaleY=0.88;
+        } else {
+          state.mode = state.mode===1 ? 0 : 1;
+          if(state.mode===1){
+            if(player.y < H/2){ player.onCeiling=true; player.onGround=false; player.y=ceilingY; state.spiderSide='ceiling'; }
+            else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; state.spiderSide='floor'; }
+            player.vy=0; player.targetRotation += Math.PI; player.scaleX=0.88; player.scaleY=1.16;
+          } else {
+            player.onGround=false; player.onCeiling=false; player.vy=0; player.targetRotation=0; player.rotation*=0.35; player.scaleX=1.12; player.scaleY=0.88;
+            if(state.gravityDir===1 && player.y < H/2) player.y=ceilingY+4;
+            if(state.gravityDir===-1 && player.y > H/2) player.y=groundY-player.h-4;
+          }
+        }
+
         updateLabels();
         state.cameraShake=5;
         emit(player.x+player.w/2, player.y+player.h/2, COLORS.lime, 18, 6);
 
-        if(state.mode===1){
-          if(player.y < H/2){ player.onCeiling=true; player.onGround=false; player.y=ceilingY; state.spiderSide='ceiling'; }
-          else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; state.spiderSide='floor'; }
-          player.vy=0; player.targetRotation += Math.PI; player.scaleX=0.88; player.scaleY=1.16;
-        } else {
-          player.onGround=false; player.onCeiling=false; player.vy=0; player.targetRotation=0; player.rotation*=0.35; player.scaleX=1.12; player.scaleY=0.88;
-          if(state.gravityDir===1 && player.y < H/2) player.y=ceilingY+4;
-          if(state.gravityDir===-1 && player.y > H/2) player.y=groundY-player.h-4;
-        }
-
         if(!po.ender){
-          state.portalExitDueTime = state.time + 720; // exactly 12 seconds later
+          state.portalExitDueTime = state.time + 720;
           state.portalExitKind = 'spider';
         } else {
           state.portalEventActive = false;
@@ -848,18 +902,37 @@ function update(){
         }
 
       } else if(po.kind==='gravity'){
-        state.gravityDir *= -1;
+        const isNormalState = state.mode===0 && state.gravityDir===1 && !state.forestMode;
+        const isIncompatible = state.mode===1 || isNormalState;
+
+        if(!po.ender && isIncompatible){
+          state.portalBaseline = capturePortalBaseline();
+          state.mode = 0;
+          state.gravityDir = -1;
+          player.onGround=false;
+          player.onCeiling=true;
+          player.y=ceilingY;
+          player.vy=0;
+          player.targetRotation = -player.targetRotation;
+          player.scaleX=0.92;
+          player.scaleY=1.12;
+        } else if(po.ender && state.portalBaseline){
+          restorePortalBaseline();
+        } else {
+          state.gravityDir *= -1;
+          player.vy=0; player.scaleX=0.92; player.scaleY=1.12; player.targetRotation = -player.targetRotation;
+          if(state.mode===0){
+            if(state.gravityDir===-1){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
+            else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
+          } else {
+            if(player.onGround){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
+            else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
+          }
+        }
+
         updateLabels();
         state.cameraShake=6;
         emit(player.x+player.w/2, player.y+player.h/2, COLORS.gold, 18, 6);
-        player.vy=0; player.scaleX=0.92; player.scaleY=1.12; player.targetRotation = -player.targetRotation;
-        if(state.mode===0){
-          if(state.gravityDir===-1){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
-          else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
-        } else {
-          if(player.onGround){ player.onGround=false; player.onCeiling=true; player.y=ceilingY; }
-          else { player.onGround=true; player.onCeiling=false; player.y=groundY-player.h; }
-        }
 
         if(!po.ender){
           state.portalExitDueTime = state.time + 720;
@@ -871,11 +944,26 @@ function update(){
           state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
         }
       } else if(po.kind==='jetpack'){
-        state.mode = state.mode===2 ? 0 : 2;
+        const isNormalState = state.mode===0 && state.gravityDir===1 && !state.forestMode;
+        const isIncompatible = state.mode===1 || isNormalState;
+
+        if(!po.ender && isIncompatible){
+          state.portalBaseline = capturePortalBaseline();
+          state.mode = 2;
+          player.vy=0;
+          player.scaleX=0.92;
+          player.scaleY=1.12;
+          player.targetRotation = 0;
+        } else if(po.ender && state.portalBaseline){
+          restorePortalBaseline();
+        } else {
+          state.mode = state.mode===2 ? 0 : 2;
+          player.vy=0; player.scaleX=0.92; player.scaleY=1.12; player.targetRotation = 0;
+        }
+
         updateLabels();
         state.cameraShake=6;
         emit(player.x+player.w/2, player.y+player.h/2, COLORS.cyan, 18, 6);
-        player.vy=0; player.scaleX=0.92; player.scaleY=1.12; player.targetRotation = 0;
 
         if(!po.ender){
           state.portalExitDueTime = state.time + 720;
@@ -887,7 +975,18 @@ function update(){
           state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
         }
       } else if(po.kind==='forest'){
-        state.forestMode = !state.forestMode;
+        const isNormalState = state.mode===0 && state.gravityDir===1 && !state.forestMode;
+        const isIncompatible = isNormalState;
+
+        if(!po.ender && isIncompatible){
+          state.portalBaseline = capturePortalBaseline();
+          state.forestMode = true;
+        } else if(po.ender && state.portalBaseline){
+          restorePortalBaseline();
+        } else {
+          state.forestMode = !state.forestMode;
+        }
+
         for(const o of state.obstacles){
           o.phase = state.forestMode ? 2 : (Math.random() < 0.5 ? 0 : 1);
         }
@@ -906,19 +1005,33 @@ function update(){
           state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
         }
       } else if(po.kind==='normal'){
-        state.mode = 0;
-        state.gravityDir = 1;
-        state.forestMode = false;
-        state.phase = 0;
-        for(const o of state.obstacles){
-          o.phase = Math.random() < 0.5 ? 0 : 1;
+        const hadBaseline = !!state.portalBaseline;
+        if(!po.ender){
+          state.portalBaseline = capturePortalBaseline();
+        } else if(hadBaseline){
+          restorePortalBaseline();
         }
-        player.vy = 0;
-        player.y = groundY - player.h;
-        player.onGround = true;
-        player.onCeiling = false;
-        player.targetRotation = 0;
-        player.rotation *= 0.35;
+
+        if(!po.ender){
+          state.mode = 0;
+          state.gravityDir = 1;
+          state.forestMode = false;
+          state.phase = 0;
+          for(const o of state.obstacles){
+            o.phase = Math.random() < 0.5 ? 0 : 1;
+          }
+          player.vy = 0;
+          player.y = groundY - player.h;
+          player.onGround = true;
+          player.onCeiling = false;
+          player.targetRotation = 0;
+          player.rotation *= 0.35;
+        } else {
+          for(const o of state.obstacles){
+            o.phase = state.forestMode ? 2 : (Math.random() < 0.5 ? 0 : 1);
+          }
+        }
+
         state.cameraShake = 6;
         emit(player.x+player.w/2, player.y+player.h/2, COLORS.magenta, 18, 6);
 
