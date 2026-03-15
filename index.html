@@ -122,11 +122,12 @@ const player = {
 function phaseColor(i){ return COLORS[PHASES[i]]; }
 function updateLabels(){}
 function getPortalKindsForCurrentRun(){
-  const allPortalKinds = ['spider','gravity','jetpack','forest','normal'];
-  if(state.selectedGameMode !== GAME_MODES.portalTrials) return allPortalKinds;
+  const classicPortalKinds = ['spider','gravity','jetpack','forest'];
+  const portalTrialsPortalKinds = [...classicPortalKinds, 'normal'];
+  if(state.selectedGameMode !== GAME_MODES.portalTrials) return classicPortalKinds;
 
   const preselectedKind = state.portalTrial?.kind;
-  return allPortalKinds.filter(kind => kind !== preselectedKind);
+  return portalTrialsPortalKinds.filter(kind => kind !== preselectedKind);
 }
 function getBestForCurrentGameMode(){
   return state.selectedGameMode === GAME_MODES.portalTrials ? bestPortalTrials : bestClassic;
