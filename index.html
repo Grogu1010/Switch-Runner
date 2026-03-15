@@ -72,11 +72,17 @@ const PORTAL_TRIAL_OPTIONS = [
   { kind:'spider', label:'Spider', color:COLORS.purple },
   { kind:'gravity', label:'Gravity', color:COLORS.gold },
   { kind:'jetpack', label:'Jetpack', color:COLORS.cyan },
-  { kind:'forest', label:'Forest', color:COLORS.forest },
-  { kind:'normal', label:'Normal', color:COLORS.magenta }
+  { kind:'forest', label:'Forest', color:COLORS.forest }
 ];
 
-let bestClassic = Number(localStorage.getItem('switchRunnerBestClassic') || 0);
+const LEGACY_CLASSIC_SCORE_KEY = 'pulsePrismDXBest';
+const CLASSIC_SCORE_KEY = 'switchRunnerBestClassic';
+const classicBestFromCurrentKey = Number(localStorage.getItem(CLASSIC_SCORE_KEY) || 0);
+const classicBestFromLegacyKey = Number(localStorage.getItem(LEGACY_CLASSIC_SCORE_KEY) || 0);
+let bestClassic = Math.max(classicBestFromCurrentKey, classicBestFromLegacyKey);
+if(bestClassic > 0){
+  localStorage.setItem(CLASSIC_SCORE_KEY, String(bestClassic));
+}
 let bestPortalTrials = Number(localStorage.getItem('switchRunnerBestPortalTrials') || 0);
 
 
@@ -330,6 +336,7 @@ function spawnPlatform(){
 }
 function spawnPickup(){ state.pickups.push({x:W+20,y:groundY-130-Math.random()*160,r:11,bob:Math.random()*Math.PI*2}); }
 function isPortalIncomingSoon(){
+  if(state.selectedGameMode !== GAME_MODES.classic) return false;
   const leadFrames = 170;
   const startPortalSoon = !state.portalEventActive && (state.nextPortalEvent - state.time) <= leadFrames;
   const endPortalSoon = state.portalEventActive && state.portalExitDueTime !== null && (state.portalExitDueTime - state.time) <= leadFrames;
