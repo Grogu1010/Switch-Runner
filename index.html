@@ -64,8 +64,20 @@ const COLORS = {
 };
 const PHASES = ['cyan','magenta','forest'];
 const MODES = ['runner','spider','jetpack'];
+const GAME_MODES = {
+  classic: 'classic',
+  portalTrials: 'portalTrials'
+};
+const PORTAL_TRIAL_OPTIONS = [
+  { kind:'spider', label:'Spider', color:COLORS.purple },
+  { kind:'gravity', label:'Gravity', color:COLORS.gold },
+  { kind:'jetpack', label:'Jetpack', color:COLORS.cyan },
+  { kind:'forest', label:'Forest', color:COLORS.forest },
+  { kind:'normal', label:'Normal', color:COLORS.magenta }
+];
 
-let best = Number(localStorage.getItem('pulsePrismDXBest') || 0);
+let bestClassic = Number(localStorage.getItem('switchRunnerBestClassic') || 0);
+let bestPortalTrials = Number(localStorage.getItem('switchRunnerBestPortalTrials') || 0);
 
 
 const state = {
@@ -79,8 +91,14 @@ const state = {
   jetpackThrust:0,
   lastGroundHazard:'',
   showHelp:false,
+  selectedGameMode:GAME_MODES.classic,
+  pendingRunStartFrames:0,
+  portalTrial:null,
+  portalIntroTotal:60,
+  portalIntroFrames:0,
   menuScore:0,
   menuButton:{x:0,y:0,w:0,h:0},
+  modeButton:{x:0,y:0,w:0,h:0},
   backButton:{x:0,y:0,w:0,h:0},
   nextMovingPlatformChance:1/8,
   playerOnPlatform:false,
@@ -96,6 +114,9 @@ const player = {
 
 function phaseColor(i){ return COLORS[PHASES[i]]; }
 function updateLabels(){}
+function getBestForCurrentGameMode(){
+  return state.selectedGameMode === GAME_MODES.portalTrials ? bestPortalTrials : bestClassic;
+}
 function emit(x,y,color,count=8,spread=3){
   for(let i=0;i<count;i++){
     state.particles.push({x,y,color,vx:(Math.random()-0.5)*spread,vy:(Math.random()-0.5)*spread-Math.random()*1.5,life:24+Math.random()*12,size:2+Math.random()*4});
@@ -104,6 +125,7 @@ function emit(x,y,color,count=8,spread=3){
 function reset(){
   state.started=false; state.gameOver=false; state.speed=6.1; state.time=0; state.cameraShake=0;
   state.phase=0; state.mode=0; state.gravityDir=1; state.particles=[]; state.obstacles=[]; state.platforms=[]; state.pickups=[]; state.portals=[]; state.phaseTransfer=null; state.portalEventActive=false; state.nextPortalEvent=900; state.portalExitDueTime=null; state.portalExitKind=null; state.forestMode=false; state.spiderSide='floor'; state.spiderTransitFrames=0; state.jetpackThrust=0; state.lastGroundHazard=''; state.showHelp=false;
+  state.pendingRunStartFrames=0; state.portalTrial=null; state.portalIntroFrames=0;
   state.nextMovingPlatformChance=1/8; state.playerOnPlatform=false; state.jumpStartedFromPlatform=false; state.platformDropChainActive=false; state.platformJumpBonus=35;
   player.x=160; player.y=groundY-player.h; player.vy=0; player.onGround=true; player.onCeiling=false; player.scaleX=1; player.scaleY=1; player.rotation=0; player.targetRotation=0; player.trail=[];
   updateLabels();
@@ -114,6 +136,33 @@ function startFreshRun(){
   state.score = 0;
   state.menuScore = 0;
   state.started = true;
+  if(state.selectedGameMode === GAME_MODES.portalTrials){
+    state.pendingRunStartFrames = state.portalIntroTotal;
+    state.portalIntroFrames = state.portalIntroTotal;
+    state.portalTrial = PORTAL_TRIAL_OPTIONS[Math.floor(Math.random() * PORTAL_TRIAL_OPTIONS.length)];
+
+    if(state.portalTrial.kind === 'spider'){
+      state.mode = 1;
+      state.spiderSide = 'floor';
+      player.y = groundY - player.h;
+      player.onGround = true;
+    } else if(state.portalTrial.kind === 'gravity'){
+      state.gravityDir = -1;
+      state.mode = 0;
+      player.y = ceilingY;
+      player.onCeiling = true;
+      player.onGround = false;
+    } else if(state.portalTrial.kind === 'jetpack'){
+      state.mode = 2;
+    } else if(state.portalTrial.kind === 'forest'){
+      state.forestMode = true;
+      state.phase = 2;
+      state.mode = 0;
+    } else {
+      state.mode = 0;
+    }
+    player.vy = 0;
+  }
 }
 function initBackground(){
   state.stars = Array.from({length:110},()=>({
@@ -125,9 +174,15 @@ function initBackground(){
 function endGame(){
   state.cameraShake=12;
   emit(player.x+player.w/2, player.y+player.h/2, phaseColor(state.phase), 20, 7);
-  best=Math.max(best, Math.floor(state.score));
-  localStorage.setItem('pulsePrismDXBest', best);
-  state.menuScore = Math.floor(state.score);
+  const finalScore = Math.floor(state.score);
+  if(state.selectedGameMode === GAME_MODES.portalTrials){
+    bestPortalTrials = Math.max(bestPortalTrials, finalScore);
+    localStorage.setItem('switchRunnerBestPortalTrials', bestPortalTrials);
+  } else {
+    bestClassic = Math.max(bestClassic, finalScore);
+    localStorage.setItem('switchRunnerBestClassic', bestClassic);
+  }
+  state.menuScore = finalScore;
   state.started = false;
   state.gameOver = false;
   state.showHelp = false;
@@ -344,6 +399,10 @@ function spawnJetpackPortal(start=false){
 function spawnForestPortal(start=false){
   const portalX = W + 60;
   state.portals.push({x: portalX,y:0,w:28,h:H,kind:'forest',ttl:720,ender:!start,triggered:false});
+}
+function spawnNormalPortal(start=false){
+  const portalX = W + 60;
+  state.portals.push({x: portalX,y:0,w:28,h:H,kind:'normal',ttl:720,ender:!start,triggered:false});
 }
 function spawnEndPortal(kind){
   const portalX = W + 60;
@@ -591,6 +650,12 @@ function update(){
   state.particles = state.particles.filter(p=>p.life>0);
   if(!state.started || state.gameOver) return;
 
+  if(state.pendingRunStartFrames > 0){
+    state.pendingRunStartFrames -= 1;
+    state.portalIntroFrames = state.pendingRunStartFrames;
+    return;
+  }
+
   state.score += 0.12 + state.speed * 0.016;
   // speed no longer increases
 
@@ -673,14 +738,15 @@ function update(){
 
   // Portal events: a start portal appears at a random interval around ~12s.
   // After you hit it, the matching end portal appears exactly 12s later.
-  if(!state.portalEventActive && state.time >= state.nextPortalEvent){
+  if(state.selectedGameMode === GAME_MODES.classic && !state.portalEventActive && state.time >= state.nextPortalEvent){
     state.portalEventActive = true;
-    const portalKinds = ['spider','gravity','jetpack','forest'];
+    const portalKinds = ['spider','gravity','jetpack','forest','normal'];
     const chosen = portalKinds[Math.floor(Math.random() * portalKinds.length)];
     if(chosen === 'spider') spawnSpiderPortal(true);
     else if(chosen === 'gravity') spawnGravityPortal(true);
     else if(chosen === 'jetpack') spawnJetpackPortal(true);
-    else spawnForestPortal(true);
+    else if(chosen === 'forest') spawnForestPortal(true);
+    else spawnNormalPortal(true);
   }
 
   if(Math.random()<0.006 && (state.pickups.length===0 || state.pickups[state.pickups.length-1].x < W-260) && !portalTooClose) spawnPickup();
@@ -722,7 +788,7 @@ function update(){
     if(po.ttl !== undefined) po.ttl -= 1;
   }
 
-  if(state.portalEventActive && state.portalExitDueTime !== null && state.time >= state.portalExitDueTime){
+  if(state.selectedGameMode === GAME_MODES.classic && state.portalEventActive && state.portalExitDueTime !== null && state.time >= state.portalExitDueTime){
     if(!state.portals.some(p => p.ender && p.kind === state.portalExitKind)){
       spawnEndPortal(state.portalExitKind);
     }
@@ -819,6 +885,32 @@ function update(){
         if(!po.ender){
           state.portalExitDueTime = state.time + 720;
           state.portalExitKind = 'forest';
+        } else {
+          state.portalEventActive = false;
+          state.portalExitDueTime = null;
+          state.portalExitKind = null;
+          state.nextPortalEvent = state.time + (720 + Math.floor(Math.random()*360));
+        }
+      } else if(po.kind==='normal'){
+        state.mode = 0;
+        state.gravityDir = 1;
+        state.forestMode = false;
+        state.phase = 0;
+        for(const o of state.obstacles){
+          o.phase = Math.random() < 0.5 ? 0 : 1;
+        }
+        player.vy = 0;
+        player.y = groundY - player.h;
+        player.onGround = true;
+        player.onCeiling = false;
+        player.targetRotation = 0;
+        player.rotation *= 0.35;
+        state.cameraShake = 6;
+        emit(player.x+player.w/2, player.y+player.h/2, COLORS.magenta, 18, 6);
+
+        if(!po.ender){
+          state.portalExitDueTime = state.time + 720;
+          state.portalExitKind = 'normal';
         } else {
           state.portalEventActive = false;
           state.portalExitDueTime = null;
@@ -948,7 +1040,13 @@ function drawPlatform(p){
   ctx.restore();
 }
 function drawPortal(p){
-  const color = p.kind==='gravity' ? COLORS.gold : (p.kind==='jetpack' ? COLORS.cyan : (p.kind==='forest' ? COLORS.forest : COLORS.purple));
+  const color = p.kind==='gravity'
+    ? COLORS.gold
+    : (p.kind==='jetpack'
+      ? COLORS.cyan
+      : (p.kind==='forest'
+        ? COLORS.forest
+        : (p.kind==='normal' ? COLORS.magenta : COLORS.purple)));
   const cx = p.x + p.w/2;
   const wave = Math.sin(state.time*0.08 + p.x*0.03);
 
@@ -1012,6 +1110,11 @@ function drawPortal(p){
       ctx.moveTo(0,-4); ctx.lineTo(-6,7); ctx.lineTo(6,7); ctx.closePath();
       ctx.moveTo(0,7); ctx.lineTo(0,12);
       ctx.stroke();
+      ctx.strokeStyle=color;
+    } else if(p.kind==='normal'){
+      ctx.strokeStyle='rgba(255,255,255,.95)';
+      ctx.lineWidth=2;
+      ctx.strokeRect(-7,-7,14,14);
       ctx.strokeStyle=color;
     }
     ctx.restore();
@@ -1165,8 +1268,19 @@ function drawOverlay(){
   ctx.shadowColor=phaseColor(state.phase);
   const shownScore = state.started ? Math.floor(state.score) : Math.floor(state.menuScore || 0);
   ctx.fillText('Score: ' + shownScore, 18, 32);
-  ctx.fillText('Best: ' + best, 18, 58);
+  ctx.fillText((state.selectedGameMode === GAME_MODES.portalTrials ? 'Portal Trials Best: ' : 'Classic Best: ') + getBestForCurrentGameMode(), 18, 58);
   ctx.restore();
+
+  if(state.started && state.selectedGameMode === GAME_MODES.portalTrials && state.portalTrial){
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = state.portalTrial.color;
+    ctx.font = 'bold 24px system-ui';
+    ctx.fillText(`Portal Trials: ${state.portalTrial.label}`, W/2, 34);
+    ctx.restore();
+  }
 
   if(!state.started){
     ctx.fillStyle='rgba(0,0,0,.34)';
@@ -1241,6 +1355,40 @@ function drawOverlay(){
     ctx.fillStyle='#fff';
     ctx.font='bold 22px system-ui';
     ctx.fillText('How To Play', W/2, by + 33);
+
+    const mbx = W/2 - 180, mby = by + 70, mbw = 360, mbh = 52;
+    state.modeButton = {x:mbx,y:mby,w:mbw,h:mbh};
+    const isPortalTrials = state.selectedGameMode === GAME_MODES.portalTrials;
+    ctx.fillStyle = isPortalTrials ? 'rgba(255,79,216,.18)' : 'rgba(55,240,255,.14)';
+    ctx.beginPath();
+    ctx.roundRect(mbx, mby, mbw, mbh, 16);
+    ctx.fill();
+    ctx.strokeStyle = isPortalTrials ? 'rgba(255,79,216,.8)' : 'rgba(55,240,255,.8)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 21px system-ui';
+    ctx.fillText(isPortalTrials ? 'Portal Trials' : 'Classic Mode', W/2, mby + 33);
+    return;
+  }
+
+  if(state.selectedGameMode === GAME_MODES.portalTrials && state.pendingRunStartFrames > 0 && state.portalTrial){
+    const done = 1 - (state.pendingRunStartFrames / state.portalIntroTotal);
+    const holdPart = Math.min(done, 0.6) / 0.6;
+    const movePart = done > 0.6 ? (done - 0.6) / 0.4 : 0;
+    const fontSize = 62 - (30 * movePart);
+    const x = W/2;
+    const y = (H/2) + ((52 - (H/2)) * movePart);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 24;
+    ctx.shadowColor = state.portalTrial.color;
+    ctx.font = `bold ${fontSize}px system-ui`;
+    ctx.globalAlpha = holdPart < 1 ? (0.6 + holdPart * 0.4) : 1;
+    ctx.fillText(`Your Portal Is: ${state.portalTrial.label}`, x, y);
+    ctx.restore();
   }
 }
 function draw(){
@@ -1264,10 +1412,10 @@ window.addEventListener('keydown', e => {
     if(!state.started){
       if(!state.showHelp){
         startFreshRun();
-        jump();
+        if(state.selectedGameMode === GAME_MODES.classic) jump();
       }
     } else {
-      jump();
+      if(state.pendingRunStartFrames <= 0) jump();
     }
   } else if(e.code==='Escape' && state.showHelp && !state.started){
     state.showHelp = false;
@@ -1288,6 +1436,14 @@ canvas.addEventListener('click', (e) => {
     const b = state.showHelp ? state.backButton : state.menuButton;
     if(x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h){
       state.showHelp = !state.showHelp;
+      return;
+    }
+
+    if(!state.showHelp){
+      const mb = state.modeButton;
+      if(x >= mb.x && x <= mb.x + mb.w && y >= mb.y && y <= mb.y + mb.h){
+        state.selectedGameMode = state.selectedGameMode === GAME_MODES.classic ? GAME_MODES.portalTrials : GAME_MODES.classic;
+      }
     }
   }
 });
